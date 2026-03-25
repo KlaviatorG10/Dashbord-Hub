@@ -39,5 +39,8 @@ Dashboardet er nå tilgjengelig på: http://127.0.0.1:8000
 Data som sendes fra Hub til nRF54L15 følger dette formatet:
 STATE:NOTE:VELOCITY\n (Eks: ON:60:127\n)
 
+
+Det er også mulig å bruke script filene "start_windows.bat" og "start_mac.sh" avhengig av hva slags maskin du har. 
+
 Ta kontakt med meg (Yousef) hvis du har spørsmål om oppsettet.
 
