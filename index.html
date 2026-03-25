@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Klaviator | Kontrollsenter</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;500;700&family=Share+Tech+Mono&display=swap');
+
+        :root {
+            --bg-color: #050505;
+            --panel-bg: rgba(20, 20, 20, 0.7);
+            --text-main: #e0e0e0;
+            --text-muted: #888888;
+            --gold: #D4AF37;
+            --gold-glow: rgba(212, 175, 55, 0.4);
+            --gold-bright: #F3E5AB;
+            --border-color: #333;
+            --danger: #ff3333;
+            --success: #00ffcc;
+            --cyan: #00e5ff;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Rajdhani', sans-serif;
+            background-color: var(--bg-color);
+            background-image: 
+                linear-gradient(rgba(212, 175, 55, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(212, 175, 55, 0.03) 1px, transparent 1px);
+            background-size: 30px 30px;
+            color: var(--text-main);
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        header {
+            width: 100%;
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            background: linear-gradient(to bottom, rgba(0,0,0,0.9), transparent);
+        }
+
+        .brand-container {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        h1 {
+            color: var(--gold-bright);
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            margin: 0;
+            font-weight: 700;
+            text-shadow: 0 0 10px var(--gold-glow);
+        }
+
+        .status-bar {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 8px 15px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: var(--danger);
+            box-shadow: 0 0 8px var(--danger);
+        }
+
+        .status-indicator.connected {
+            background-color: var(--success);
+            box-shadow: 0 0 8px var(--success);
+        }
+
+        .dashboard-container {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 25px;
+            max-width: 1300px;
+            width: 95%;
+            margin-top: 40px;
+            margin-bottom: 40px;
+        }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        .panel {
+            background-color: var(--panel-bg);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(212, 175, 55, 0.2);
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .panel::before, .panel::after {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--gold);
+            opacity: 0.5;
+            transition: opacity 0.3s;
+        }
+        .panel::before { top: -1px; left: -1px; border-right: none; border-bottom: none; border-radius: 12px 0 0 0; }
+        .panel::after { bottom: -1px; right: -1px; border-left: none; border-top: none; border-radius: 0 0 12px 0; }
+        .panel:hover::before, .panel:hover::after { opacity: 1; }
+
+        .panel h2 {
+            margin-top: 0;
+            color: var(--gold);
+            font-size: 1.4rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            border-bottom: 1px solid rgba(212, 175, 55, 0.3);
+            padding-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .metric-box {
+            background: rgba(0,0,0,0.5);
+            border: 1px solid #222;
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        .metric-box .label {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+            font-family: 'Rajdhani', sans-serif;
+        }
+
+        .metric-box .value {
+            color: var(--cyan);
+            font-size: 1.4rem;
+            text-shadow: 0 0 8px rgba(0, 229, 255, 0.4);
+        }
+
+        .piano-keys {
+            display: flex;
+            margin-top: 25px;
+            justify-content: center;
+            background: #111;
+            padding: 15px 10px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            box-shadow: inset 0 0 10px #000;
+        }
+
+        .key-btn-white {
+            background: linear-gradient(to bottom, #eee, #ccc);
+            color: #333;
+            border: 1px solid #999;
+            height: 120px;
+            width: 45px;
+            border-radius: 0 0 4px 4px;
+            cursor: pointer;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.8rem;
+            font-weight: bold;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            padding-bottom: 10px;
+            position: relative;
+            transition: background 0.1s;
+        }
+
+        .key-btn-black {
+            background: linear-gradient(to bottom, #333, #000);
+            color: #aaa;
+            border: 1px solid #000;
+            height: 75px;
+            width: 32px;
+            margin-left: -16px;
+            margin-right: -16px;
+            z-index: 2;
+            border-radius: 0 0 4px 4px;
+            cursor: pointer;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.65rem;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            padding-bottom: 8px;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
+            transition: background 0.1s;
+        }
+
+        .key-btn-white:active, .key-btn-white.active {
+            background: var(--gold);
+            color: #000;
+            box-shadow: 0 0 15px var(--gold-glow);
+        }
+        .key-btn-black:active, .key-btn-black.active {
+            background: var(--cyan);
+            color: #000;
+            box-shadow: 0 0 15px rgba(0, 229, 255, 0.4);
+        }
+
+        .key-btn {
+            background: linear-gradient(145deg, #222, #111);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            padding: 20px 25px;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 1.2rem;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s ease-out;
+            position: relative;
+            overflow: hidden;
+            width: 80px;
+        }
+
+        .key-btn::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 2px;
+            background: var(--gold);
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .key-btn:hover { border-color: var(--gold); box-shadow: 0 0 10px rgba(212, 175, 55, 0.2); }
+        .key-btn:hover::before { opacity: 1; }
+        .key-btn:active, .key-btn.active {
+            background: var(--gold);
+            color: #000;
+            border-color: var(--gold-bright);
+            box-shadow: 0 0 20px var(--gold-glow);
+            transform: scale(0.95);
+        }
+
+        .control-group {
+            margin-top: 30px;
+            background: rgba(0,0,0,0.3);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #222;
+        }
+
+        .control-group label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 15px;
+        }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+
+        input[type=range]:focus { outline: none; }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 22px;
+            width: 12px;
+            border-radius: 3px;
+            background: var(--gold-bright);
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--gold-glow), inset 0 0 3px rgba(0,0,0,0.5);
+            margin-top: -9px;
+            border: 1px solid #fff;
+        }
+
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: rgba(212, 175, 55, 0.5);
+            border-radius: 2px;
+            border: 1px solid rgba(212, 175, 55, 0.8);
+            box-shadow: 0 0 5px rgba(212, 175, 55, 0.3);
+        }
+
+        .adjust-btn {
+            background: #111;
+            border: 1px solid var(--gold);
+            color: var(--gold);
+            width: 30px;
+            height: 30px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 1.2rem;
+            font-weight: bold;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.2s;
+            box-shadow: inset 0 0 5px rgba(0,0,0,0.8);
+        }
+        .adjust-btn:hover { background: var(--gold); color: #000; box-shadow: 0 0 10px var(--gold-glow); }
+        .adjust-btn:active { transform: scale(0.9); }
+
+        .number-input {
+            background: #000;
+            border: 1px solid var(--border-color);
+            color: var(--gold-bright);
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 1rem;
+            padding: 5px;
+            width: 65px;
+            text-align: center;
+            border-radius: 4px;
+            box-shadow: inset 0 0 5px rgba(0,0,0,1);
+        }
+        .number-input:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 8px var(--gold-glow); }
+        .number-input::-webkit-inner-spin-button, .number-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+        #log-window {
+            background-color: rgba(5, 5, 5, 0.8);
+            color: var(--success);
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.85rem;
+            height: 330px;
+            overflow-y: auto;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #222;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+        }
+
+        #log-window div { margin-bottom: 5px; line-height: 1.4; }
+        .log-time { color: var(--text-muted); margin-right: 10px; }
+        .log-info { color: #88ccff; }
+        .log-error { color: var(--danger); text-shadow: 0 0 5px var(--danger); }
+        .log-send { color: var(--gold); }
+        .log-recv { color: var(--success); }
+
+        #log-window::-webkit-scrollbar { width: 8px; }
+        #log-window::-webkit-scrollbar-track { background: #111; }
+        #log-window::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        #log-window::-webkit-scrollbar-thumb:hover { background: var(--gold); }
+        
+        .panic-btn {
+            background: transparent;
+            border: 1px solid var(--danger);
+            color: var(--danger);
+            text-transform: uppercase;
+            font-weight: bold;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: 'Rajdhani', sans-serif;
+            letter-spacing: 1px;
+            transition: all 0.2s;
+        }
+        .panic-btn:hover { background: rgba(255, 51, 51, 0.2); box-shadow: 0 0 15px rgba(255, 51, 51, 0.5); }
+
+        canvas {
+            width: 100%;
+            height: 150px;
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid #222;
+            border-radius: 6px;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+            display: block;
+            margin-top: 15px;
+        }
+
+        /* Y-akse labels for Piano roll */
+        .canvas-container {
+            position: relative;
+        }
+        .y-axis-labels {
+            position: absolute;
+            left: 10px;
+            top: 0;
+            height: 150px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-around;
+            padding: 15px 0;
+            pointer-events: none;
+            font-family: 'Share Tech Mono', monospace;
+            color: rgba(255,255,255,0.3);
+            font-size: 0.8rem;
+        }
+        /* Modal for Fullskjerm Logg */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--gold);
+            border-radius: 12px;
+            width: 90%;
+            height: 90%;
+            display: flex;
+            flex-direction: column;
+            padding: 25px;
+            position: relative;
+            box-shadow: 0 0 40px rgba(212, 175, 55, 0.2);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(212, 175, 55, 0.3);
+            padding-bottom: 15px;
+            margin-bottom: 15px;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            color: var(--gold);
+            font-size: 1.5rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .close-modal-btn {
+            background: transparent;
+            border: none;
+            color: var(--gold);
+            font-size: 2.5rem;
+            cursor: pointer;
+            line-height: 1;
+            transition: color 0.2s;
+        }
+
+        .close-modal-btn:hover {
+            color: var(--danger);
+        }
+
+        #modal-log-window {
+            flex-grow: 1;
+            background-color: rgba(5, 5, 5, 0.9);
+            color: var(--success);
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 1rem;
+            overflow-y: auto;
+            padding: 20px;
+            border-radius: 6px;
+            border: 1px solid #222;
+        }
+
+        #modal-log-window::-webkit-scrollbar { width: 10px; }
+        #modal-log-window::-webkit-scrollbar-track { background: #111; }
+        #modal-log-window::-webkit-scrollbar-thumb { background: #333; border-radius: 5px; }
+        #modal-log-window::-webkit-scrollbar-thumb:hover { background: var(--gold); }
+
+        .fullscreen-btn {
+            background: transparent;
+            border: 1px solid var(--cyan);
+            color: var(--cyan);
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 0.8rem;
+            font-weight: bold;
+            margin-left: auto;
+            transition: all 0.2s;
+            letter-spacing: 1px;
+        }
+        .fullscreen-btn:hover {
+            background: rgba(0, 229, 255, 0.2);
+            box-shadow: 0 0 10px rgba(0, 229, 255, 0.4);
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/soundfont-player@0.12.0/dist/soundfont-player.min.js"></script>
+</head>
+<body>
+
+    <header>
+        <div class="brand-container">
+            <img src="/logo.png" alt="Klaviator Logo" style="height: 65px; filter: drop-shadow(0 0 12px rgba(212, 175, 55, 0.4));">
+            <div>
+                <h1>Klaviator</h1>
+                <div style="color: var(--gold); font-family: 'Share Tech Mono'; font-size: 0.8rem; letter-spacing: 2px;">HOVEDKONTROLLSENTER</div>
+            </div>
+        </div>
+        <div class="status-bar">
+            <span>SYS.SYNK:</span>
+            <span id="ws-status" class="status-indicator"></span>
+            <span id="ws-text" style="color: var(--text-muted);">FRAKOBLET</span>
+            <button id="audio-toggle" class="panic-btn" style="border-color: var(--cyan); color: var(--cyan);" onclick="toggleAudio()">🔇 LYDLØS</button>
+            <button class="panic-btn" onclick="triggerEStop()">NØDSTOPP</button>
+        </div>
+    </header>
+
+    <div class="dashboard-container">
+        
+        <!-- VISUAL TELEMETRY -->
+        <div class="panel full-width">
+            <h2>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--gold);"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+                Visuell Signal-Telemetri
+            </h2>
+            <div class="canvas-container">
+                <div class="y-axis-labels">
+                    <span>C7</span>
+                    <span>C6</span>
+                    <span>C5</span>
+                    <span>C4</span>
+                    <span>C3</span>
+                </div>
+                <canvas id="piano-roll-canvas" width="1200" height="150"></canvas>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--gold);"><polygon points="3 3 21 3 21 21 3 21 3 3"></polygon><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>
+                Maskinvare-Simulering
+            </h2>
+            
+            <!-- Nye Metrikker for mer Hacker-look -->
+            <div class="metrics-grid">
+                <div class="metric-box">
+                    <div class="label">BPM</div>
+                    <div class="value" id="bpm-value">120</div>
+                </div>
+                <div class="metric-box">
+                    <div class="label">Aktuator Spenning</div>
+                    <div class="value">24.0V</div>
+                </div>
+                <div class="metric-box">
+                    <div class="label">CPU Latency</div>
+                    <div class="value" id="cpu-latency">--</div>
+                </div>
+            </div>
+
+            <!-- KNAPP FOR Å LASTE NED DATA TIL RAPPORT -->
+            <div style="text-align: right; margin-bottom: 20px;">
+                <button class="key-btn" style="padding: 5px 15px; font-size: 0.8rem; border-color: var(--gold); color: var(--gold);" onclick="downloadLatencyData()">📊 LAST NED LATENCY-RAPPORT (CSV)</button>
+            </div>
+
+            <p style="color: var(--text-muted); font-size: 0.95rem; line-height: 1.5; margin-bottom: 20px;">
+                Aktiver manuell overstyring. Signaler kringkastes via WebSocket til Unity-klienten og sendes til seriell-port for fysisk aktivering av roboten.
+            </p>
+            
+            <div class="piano-keys">
+                <button class="key-btn-white" onclick="sendNote(60)">C4</button>
+                <button class="key-btn-black" onclick="sendNote(61)">C#</button>
+                <button class="key-btn-white" onclick="sendNote(62)">D4</button>
+                <button class="key-btn-black" onclick="sendNote(63)">D#</button>
+                <button class="key-btn-white" onclick="sendNote(64)">E4</button>
+                <button class="key-btn-white" onclick="sendNote(65)">F4</button>
+                <button class="key-btn-black" onclick="sendNote(66)">F#</button>
+                <button class="key-btn-white" onclick="sendNote(67)">G4</button>
+                <button class="key-btn-black" onclick="sendNote(68)">G#</button>
+                <button class="key-btn-white" onclick="sendNote(69)">A4</button>
+                <button class="key-btn-black" onclick="sendNote(70)">A#</button>
+                <button class="key-btn-white" onclick="sendNote(71)">B4</button>
+                <button class="key-btn-white" onclick="sendNote(72)">C5</button>
+            </div>
+            
+            <div class="control-group">
+                <label>
+                    <span>Forsinkelseskompensasjon (Look-ahead i ms)</span>
+                </label>
+                <div class="slider-container">
+                    <button class="adjust-btn" onclick="adjustOffset(-10)">-</button>
+                    <input type="range" id="offset-slider" min="0" max="2000" value="50" oninput="syncOffset(this.value)" onchange="syncOffset(this.value)">
+                    <button class="adjust-btn" onclick="adjustOffset(10)">+</button>
+                    <input type="number" id="offset-input" class="number-input" value="50" min="0" max="2000" onchange="syncOffset(this.value)">
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label>
+                    <span>Autonom Sekvens-Laster (MIDI)</span>
+                    <span id="midi-status" style="color: var(--text-muted);">Ingen fil lastet</span>
+                </label>
+                <div style="display: flex; gap: 10px; margin-top: 15px;">
+                    <input type="file" id="midi-upload" accept=".mid,.midi" style="display: none;" onchange="uploadMidi()">
+                    <button class="key-btn" style="flex: 1; padding: 10px; font-size: 1rem; color: var(--cyan); border-color: var(--cyan);" onclick="document.getElementById('midi-upload').click()">LAST OPP NY</button>
+                </div>
+
+                <!-- MIDI BIBLIOTEK -->
+                <div style="margin-top: 20px; border-top: 1px solid #333; padding-top: 15px;">
+                    <div style="color: var(--gold); font-size: 0.8rem; text-transform: uppercase; margin-bottom: 10px;">📚 Sangbibliotek (/midi_library)</div>
+                    <div id="midi-library-list" style="max-height: 150px; overflow-y: auto; background: rgba(0,0,0,0.5); border-radius: 4px; border: 1px solid #222;">
+                        <div style="padding: 10px; color: #555; font-style: italic;">Laster bibliotek...</div>
+                    </div>
+                    <button class="key-btn" style="width: 100%; margin-top: 10px; padding: 5px; font-size: 0.8rem;" onclick="refreshLibrary()">🔄 OPPDATER LISTE</button>
+                </div>
+
+                <!-- Nye avspillingskontroller -->
+                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                    <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem;" onclick="controlPlayback('resume')">▶️ SPILL</button>
+                    <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem;" onclick="controlPlayback('pause')">⏸️ PAUSE</button>
+                    <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem; color: var(--danger); border-color: var(--danger);" onclick="controlPlayback('stop')">⏹️ STOPP</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2 style="display: flex; justify-content: space-between; width: 100%;">
+                <span style="display: flex; align-items: center; gap: 10px;">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--gold);"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+                    Systemlogg / Dataflyt
+                </span>
+                <button class="fullscreen-btn" onclick="openModal()">⛶ FULLSKJERM</button>
+            </h2>
+            <div id="log-window">
+                <div><span class="log-time">[SYS]</span> <span class="log-info">Oppstart fullført. Venter på nettverkstilkobling...</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for fullskjerm logg -->
+    <div id="log-modal" class="modal-overlay" onclick="closeModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h2>Systemlogg / Dataflyt (Fullskjerm)</h2>
+                <button class="close-modal-btn" onclick="closeModal(event)">&times;</button>
+            </div>
+            <div id="modal-log-window">
+                <div><span class="log-time">[SYS]</span> <span class="log-info">Oppstart fullført. Venter på nettverkstilkobling...</span></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        const logWindow = document.getElementById('log-window');
+        const statusIndicator = document.getElementById('ws-status');
+        const statusText = document.getElementById('ws-text');
+        const cpuLatencyText = document.getElementById('cpu-latency');
+        const midiLibList = document.getElementById('midi-library-list');
+        
+        // --- MODAL LOGIKK ---
+        const modalOverlay = document.getElementById('log-modal');
+        const modalLogWindow = document.getElementById('modal-log-window');
+
+        function openModal() {
+            modalOverlay.style.display = 'flex';
+            modalLogWindow.scrollTop = modalLogWindow.scrollHeight;
+            document.addEventListener('keydown', handleEscape);
+        }
+
+        function closeModal(event) {
+            if(event) event.stopPropagation();
+            modalOverlay.style.display = 'none';
+            document.removeEventListener('keydown', handleEscape);
+        }
+        
+        function handleEscape(e) {
+            if (e.key === 'Escape') closeModal();
+        }
+        // --------------------
+        
+        function downloadLatencyData() {
+            if (latencyData.length === 0) {
+                alert("Ingen data å laste ned. Spill noen noter først!");
+                return;
+            }
+
+            // Bygg CSV innhold - UTFØRLIG VERSJON FOR FORSKNING
+            let csvContent = "data:text/csv;charset=utf-8,";
+            csvContent += "Timestamp,Event,MIDI_Note,Velocity,Latency_ms,Lookahead_Setting_ms,Status\n";
+            
+            latencyData.forEach(function(row) {
+                csvContent += `${row.timestamp},${row.event},${row.note},${row.velocity || 0},${row.latency_ms},${row.current_lookahead},SUCCESS\n`;
+            });
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `klaviator_research_data_${new Date().getTime()}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            log('info', `Lastet ned forskningsrapport (${latencyData.length} rader).`);
+        }
+
+        // --- BIBLIOTEK LOGIKK ---
+        function refreshLibrary() {
+            fetch('/api/library')
+                .then(res => res.json())
+                .then(data => {
+                    midiLibList.innerHTML = '';
+                    if (!data.files || data.files.length === 0) {
+                        midiLibList.innerHTML = '<div style="padding: 10px; color: #555;">Mappen er tom...</div>';
+                        return;
+                    }
+                    data.files.forEach(file => {
+                        const div = document.createElement('div');
+                        div.style.padding = '8px 12px';
+                        div.style.borderBottom = '1px solid #222';
+                        div.style.cursor = 'pointer';
+                        div.style.display = 'flex';
+                        div.style.justifyContent = 'space-between';
+                        div.style.fontSize = '0.85rem';
+                        div.innerHTML = `<span>🎵 ${file}</span> <span style="color: var(--cyan)">SPILL ▶️</span>`;
+                        div.onclick = () => playFromLibrary(file);
+                        midiLibList.appendChild(div);
+                    });
+                })
+                .catch(err => log('error', 'Kunne ikke laste bibliotek.'));
+        }
+
+        function playFromLibrary(filename) {
+            log('info', `Starter bibliotek-avspilling: ${filename}`);
+            fetch(`/api/play_library/${filename}`)
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('midi-status').innerText = filename;
+                    document.getElementById('midi-status').style.color = "var(--gold-bright)";
+                });
+        }
+        // --------------------
+
+        // --- DATAINNSAMLING (For Bachelor Rapport) ---
+        let latencyData = []; // Array for å lagre alle målinger
+
+        function recordLatency(latency, note, type) {
+            // Vi tar bare vare på de siste 10 000 punktene så ikke nettleseren krasjer
+            if (latencyData.length > 10000) {
+                latencyData.shift(); 
+            }
+            
+            latencyData.push({
+                timestamp: new Date().toISOString(),
+                event: type,
+                note: note,
+                latency_ms: latency,
+                current_lookahead: numberInput.value // Lagrer også hva offset-slideren stod på
+            });
+        }
+
+        function downloadLatencyData() {
+            if (latencyData.length === 0) {
+                alert("Ingen data å laste ned. Spill noen noter først!");
+                return;
+            }
+
+            // Bygg CSV innhold
+            let csvContent = "data:text/csv;charset=utf-8,";
+            csvContent += "Tidspunkt,Hendelse,Note,Latency(ms),Lookahead_Innstilling(ms)\n"; // Header
+            
+            latencyData.forEach(function(row) {
+                csvContent += `${row.timestamp},${row.event},${row.note},${row.latency_ms},${row.current_lookahead}\n`;
+            });
+
+            // Lag nedlastingslenke
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `klaviator_latency_rapport_${new Date().getTime()}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            log('info', `Lastet ned CSV-rapport med ${latencyData.length} datapunkter.`);
+        }
+        // --------------------
+
+        // --- LYD SYNTHESIZER (SOUNDFONT SAMPLES) ---
+        let audioCtx;
+        let isAudioEnabled = false;
+        let pianoPlayer;
+        const activeNotes = {}; // Ordbok for å holde styr på lyder som spilles
+
+        async function toggleAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            
+            isAudioEnabled = !isAudioEnabled;
+            const btn = document.getElementById('audio-toggle');
+            
+            if (isAudioEnabled) {
+                audioCtx.resume();
+                btn.innerText = "⌛ LASTER LYD...";
+                btn.disabled = true;
+                
+                try {
+                    pianoPlayer = await Soundfont.instrument(audioCtx, 'acoustic_grand_piano');
+                    btn.innerText = "🔊 LYD PÅ";
+                    btn.style.borderColor = "var(--gold)";
+                    btn.style.color = "var(--gold)";
+                    log('info', 'Realistisk piano-lyd er klar.');
+                } catch (e) {
+                    log('error', 'Kunne ikke laste piano-samples.');
+                    btn.innerText = "🔇 FEIL";
+                } finally {
+                    btn.disabled = false;
+                }
+            } else {
+                btn.innerText = "🔇 LYDLØS";
+                btn.style.borderColor = "var(--cyan)";
+                btn.style.color = "var(--cyan)";
+                log('info', 'Lyd deaktivert.');
+                if (pianoPlayer) pianoPlayer.stop();
+            }
+        }
+
+        function playNoteSound(note, velocity) {
+            if (!isAudioEnabled || !pianoPlayer) return;
+            
+            // Hvis noten allerede spilles, stopp den gamle instansen først
+            if (activeNotes[note]) {
+                activeNotes[note].stop();
+            }
+            
+            // Start ny lyd og lagre referansen
+            activeNotes[note] = pianoPlayer.play(note, audioCtx.currentTime, { 
+                gain: velocity / 127,
+                decay: 2 // Gir en naturlig etterklang
+            });
+        }
+
+        function stopNoteSound(note) {
+            if (!pianoPlayer || !activeNotes[note]) return;
+            
+            // Stopp nøyaktig denne noten med en myk fade-out
+            activeNotes[note].stop(audioCtx.currentTime + 0.1);
+            delete activeNotes[note];
+        }
+        // ----------------------------------------
+
+        // UI Sync for Offset Slider
+        const slider = document.getElementById('offset-slider');
+        const numberInput = document.getElementById('offset-input');
+
+        let syncTimeout;
+        function syncOffset(val) {
+            let num = parseInt(val);
+            if(isNaN(num)) return;
+            if(num < 0) num = 0;
+            if(num > 2000) num = 2000; 
+            
+            slider.value = num;
+            numberInput.value = num;
+            
+            // DEBOUNCE: Vent 50ms før vi sender til serveren
+            clearTimeout(syncTimeout);
+            syncTimeout = setTimeout(() => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ action: "set_offset", value: num }));
+                    log('info', `Look-ahead satt til ${num}ms`);
+                }
+            }, 50);
+        }
+
+        function adjustOffset(change) {
+            let current = parseInt(numberInput.value);
+            syncOffset(current + change);
+        }
+
+        // --- VISUAL TELEMETRY (CANVAS) ---
+        const canvas = document.getElementById('piano-roll-canvas');
+        const ctx = canvas.getContext('2d');
+        let blocks = [];
+        let activeBlocks = {};
+
+        function handleNoteOn(note) {
+            // Map C3 (48) to C7 (96) over the 150px height. Range = 48 notes.
+            // 150 / 48 = ~3.125 px per note.
+            // Note 96 -> y = 0. Note 48 -> y = 150.
+            let yPos = 150 - ((note - 48) * 3.125); 
+            if (yPos < 0) yPos = 0;
+            if (yPos > 146) yPos = 146;
+
+            const block = { x: canvas.width, y: yPos, w: 4, active: true, note: note };
+            blocks.push(block);
+            activeBlocks[note] = block;
+        }
+
+        function handleNoteOff(note) {
+            if (activeBlocks[note]) {
+                activeBlocks[note].active = false;
+                delete activeBlocks[note];
+            }
+        }
+
+        function renderTelemetry() {
+            // Tøm canvas helt for å unngå "blødning" (trails)
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Tegn rutenett (horisontale linjer for oktaver)
+            ctx.strokeStyle = 'rgba(212, 175, 55, 0.15)';
+            ctx.lineWidth = 1;
+            [37.5, 75, 112.5].forEach(y => {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            });
+
+            // Oppdater og tegn noter
+            for (let i = blocks.length - 1; i >= 0; i--) {
+                let b = blocks[i];
+                
+                // Flytt mot venstre
+                b.x -= 4; 
+                
+                // Hvis tangenten fortsatt holdes nede, strekk blokken bakover
+                if (b.active) {
+                    b.w += 4; 
+                }
+                
+                // Fargelegging: Svarte tangenter er cyan, hvite er gull
+                const isBlackKey = [1, 3, 6, 8, 10].includes(b.note % 12);
+                ctx.fillStyle = isBlackKey ? 'rgba(0, 229, 255, 0.9)' : 'rgba(212, 175, 55, 0.9)';
+                ctx.shadowColor = isBlackKey ? 'rgba(0, 229, 255, 0.6)' : 'rgba(212, 175, 55, 0.6)';
+                ctx.shadowBlur = 8;
+                
+                // Tegn rektangelet
+                ctx.fillRect(b.x, b.y, b.w, 3);
+                ctx.shadowBlur = 0;
+
+                // Slett blokken hvis den har forlatt skjermen
+                if (b.x + b.w < -10) {
+                    blocks.splice(i, 1);
+                }
+            }
+            requestAnimationFrame(renderTelemetry);
+        }
+        renderTelemetry(); 
+        // ----------------------------------------
+
+
+        function connectWebSocket() {
+            // Bruker automatisk samme IP som nettsiden ble lastet fra
+            const serverIP = window.location.hostname;
+            ws = new WebSocket(`ws://${serverIP}:8000/ws/unity`);
+
+            ws.onopen = () => {
+                statusIndicator.classList.add('connected');
+                statusText.innerText = "TILKOBLET";
+                statusText.style.color = "var(--success)";
+                log('info', 'WebSocket-bro etablert med Hjernen.');
+                refreshLibrary(); // Last biblioteket når vi kobler til
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.event === "playback_start") {
+                    latencyData = []; // TØM GAMLE DATA
+                    currentSongName = data.data.file;
+                    songStartTime = Date.now();
+                    log('info', `START: ${data.data.file} (${data.data.total_notes} noter)`);
+                    return;
+                }
+
+                if (data.event === "playback_finish") {
+                    log('info', `FERDIG: Avspilling fullført.`);
+                    return;
+                }
+
+                if (data.event === "bpm_change") {
+                    document.getElementById('bpm-value').innerText = data.data.bpm;
+                    log('info', `Tempo: ${data.data.bpm} BPM`);
+                    return;
+                }
+                
+                if (data.event === "system_halt") {
+                    log('error', 'AVBRUDD: Systemet ble stoppet.');
+                    if (pianoPlayer) pianoPlayer.stop();
+                    return;
+                }
+
+                const latency = Date.now() - data.data.timestamp;
+                recordLatency(latency, data.data.note, data.event);
+                
+                // PERFORMANCE HACK: Oppdater tekst-felt kun når nettleseren har tid
+                requestAnimationFrame(() => {
+                    cpuLatencyText.innerText = latency + "ms";
+                    if(latency > 25) { cpuLatencyText.style.color = "var(--danger)"; } 
+                    else { cpuLatencyText.style.color = "var(--cyan)"; }
+                });
+
+                if(data.event === "note_on") {
+                    handleNoteOn(data.data.note);
+                    playNoteSound(data.data.note, data.data.velocity);
+                    const btn = document.querySelector(`button[onclick="sendNote(${data.data.note})"]`);
+                    if(btn) btn.classList.add('active');
+                } else if(data.event === "note_off") {
+                    handleNoteOff(data.data.note);
+                    stopNoteSound(data.data.note);
+                    const btn = document.querySelector(`button[onclick="sendNote(${data.data.note})"]`);
+                    if(btn) btn.classList.remove('active');
+                }
+            };
+
+            ws.onclose = () => {
+                statusIndicator.classList.remove('connected');
+                statusText.innerText = "PRØVER PÅ NYTT...";
+                statusText.style.color = "var(--danger)";
+                log('error', 'Forbindelse brutt. Forsøker å gjenopprette om 2s...');
+                setTimeout(connectWebSocket, 2000); // AUTO-RECONNECT
+            };
+        }
+
+        function sendNote(note) {
+            fetch(`/api/test_note/${note}`)
+                .then(response => response.json())
+                .then(data => log('send', `SENDER: Manuell puls for Note ${note}`))
+                .catch(error => log('error', `FEIL: Node ${note} svarer ikke.`));
+        }
+        
+        function uploadMidi() {
+            const input = document.getElementById('midi-upload');
+            if(input.files.length === 0) return;
+            
+            const file = input.files[0];
+            document.getElementById('midi-status').innerText = file.name;
+            document.getElementById('midi-status').style.color = "var(--gold-bright)";
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            log('info', `Laster opp sekvens: ${file.name}...`);
+            
+            fetch('/api/upload_midi', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                log('info', `Opplasting vellykket. Autonom sekvens startet!`);
+            })
+            .catch(err => log('error', 'Feil ved opplasting av MIDI.'));
+        }
+
+        function controlPlayback(action) {
+            fetch(`/api/playback/${action}`)
+                .then(res => res.json())
+                .then(data => {
+                    log('info', `Avspilling: ${action.toUpperCase()}`);
+                    if (action === 'stop' || action === 'pause') {
+                        // Stopp all lyd umiddelbart ved pause/stopp
+                        if (pianoPlayer) pianoPlayer.stop();
+                    }
+                })
+                .catch(err => log('error', 'Kunne ikke kommunisere med Hjernen.'));
+        }
+
+        function triggerEStop() {
+            log('error', '!!! SYSTEM HALTED - E-STOP AKTIVERT !!!');
+            fetch('/api/estop');
+        }
+
+        function log(type, message) {
+            const time = new Date().toISOString().substring(11, 23);
+            
+            let colorClass = 'log-info';
+            if (type === 'error') colorClass = 'log-error';
+            if (type === 'send') colorClass = 'log-send';
+            if (type === 'recv') colorClass = 'log-recv';
+
+            const logHtml = `<span class="log-time">[${time}]</span> <span class="${colorClass}">${message}</span>`;
+            
+            const divMain = document.createElement('div');
+            divMain.innerHTML = logHtml;
+            logWindow.appendChild(divMain);
+            
+            // PERFORMANCE HACK: Begrens antall linjer i loggen for å spare CPU
+            if (logWindow.children.length > 50) {
+                logWindow.removeChild(logWindow.firstChild);
+            }
+            logWindow.scrollTop = logWindow.scrollHeight;
+
+            const divModal = document.createElement('div');
+            divModal.innerHTML = logHtml;
+            modalLogWindow.appendChild(divModal);
+            
+            if (modalLogWindow.children.length > 200) {
+                modalLogWindow.removeChild(modalLogWindow.firstChild);
+            }
+            modalLogWindow.scrollTop = modalLogWindow.scrollHeight;
+        }
+
+        // Init
+        connectWebSocket();
+    </script>
+</body>
+</html>
