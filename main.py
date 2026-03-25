@@ -7,6 +7,7 @@ import asyncio
 import mido
 import os
 import serial
+import serial.tools.list_ports
 
 app = FastAPI(title="Klaviator Dashboard")
 
@@ -22,28 +23,57 @@ class HardwareController:
         self._try_connect_serial()
 
     def _try_connect_serial(self):
-        """Forsøker å koble til en fysisk Arduino/Mikrokontroller"""
+        """Forsøker å finne og koble til nRF54L15 over UART"""
         try:
-            self.serial_port = serial.Serial('/dev/tty.usbmodem14101', 115200, timeout=0)
-            self.is_connected = True
-            print("[HARDWARE] Tilkoblet fysisk aktuator.")
-        except Exception:
+            ports = list(serial.tools.list_ports.comports())
+            target_port = None
+            
+            for port in ports:
+                description = port.description.lower()
+                device = port.device.lower()
+                # Se etter 'usbmodem' eller 'usb serial' som spesifisert
+                if "usbmodem" in device or "usb serial" in description:
+                    target_port = port.device
+                    break
+            
+            if target_port:
+                self.serial_port = serial.Serial(target_port, 115200, timeout=1)
+                self.is_connected = True
+                print(f"[HARDWARE] Tilkoblet mikrokontroller på {target_port}")
+            else:
+                self.is_connected = False
+                print("[HARDWARE] Ingen passende USB-enhet funnet (usbmodem/usb serial).")
+        except Exception as e:
             self.is_connected = False
-            print("[HARDWARE] Ingen mikrokontroller funnet. Kjører i MOCK-modus.")
+            print(f"[HARDWARE] Feil under tilkobling: {e}. Kjører i MOCK-modus.")
 
     def set_look_ahead(self, ms: int):
         self.look_ahead_ms = ms
         print(f"[HJERNE] Look-ahead oppdatert til {ms}ms")
 
     async def actuate(self, note: int, velocity: int, is_on: bool):
-        if self.is_connected:
+        """Sender kommando til robot over UART: STATE:NOTE:VELOCITY\n"""
+        if not self.is_connected or not self.serial_port:
+            # Forsøk periodisk re-tilkobling hvis vi ikke er tilkoblet
+            self._try_connect_serial()
+
+        if self.is_connected and self.serial_port:
             try:
-                cmd = f"{'ON' if is_on else 'OFF'}:{note}:{velocity}\n"
+                state = "ON" if is_on else "OFF"
+                cmd = f"{state}:{note}:{velocity}\n"
                 self.serial_port.write(cmd.encode('utf-8'))
-            except Exception:
+            except Exception as e:
+                print(f"[HARDWARE] Mistet kobling: {e}")
                 self.is_connected = False
+                if self.serial_port:
+                    try:
+                        self.serial_port.close()
+                    except:
+                        pass
+                    self.serial_port = None
         else:
-            pass # Mock-modus
+            # Mock-modus eller ikke tilkoblet
+            pass
 
 # Initierer maskinvarekontrolleren (Hjernen)
 hardware = HardwareController()
