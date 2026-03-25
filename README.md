@@ -39,5 +39,5 @@ Dashboardet er nå tilgjengelig på: http://127.0.0.1:8000
 Data som sendes fra Hub til nRF54L15 følger dette formatet:
 STATE:NOTE:VELOCITY\n (Eks: ON:60:127\n)
 
-Ta kontakt med Yousef (Tech Lead) hvis du har spørsmål om oppsettet.
+Ta kontakt med meg (Yousef) hvis du har spørsmål om oppsettet.
 
