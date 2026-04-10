@@ -536,7 +536,12 @@
             <span>SYS.SYNK:</span>
             <span id="ws-status" class="status-indicator"></span>
             <span id="ws-text" style="color: var(--text-muted);">FRAKOBLET</span>
-            <button id="audio-toggle" class="panic-btn" style="border-color: var(--cyan); color: var(--cyan);" onclick="toggleAudio()">🔇 LYDLØS</button>
+            
+            <span style="margin-left: 15px;">nRF54 STATUS:</span>
+            <span id="mcu-status" class="status-indicator"></span>
+            <span id="mcu-text" style="color: var(--text-muted);">IKKE FUNNET</span>
+
+            <button id="audio-toggle" class="panic-btn" style="border-color: var(--cyan); color: var(--cyan); margin-left: 15px;" onclick="toggleAudio()">🔇 LYDLØS</button>
             <button class="panic-btn" onclick="triggerEStop()">NØDSTOPP</button>
         </div>
     </header>
@@ -683,10 +688,10 @@
         const cpuLatencyText = document.getElementById('cpu-latency');
         const midiLibList = document.getElementById('midi-library-list');
         
-        // --- MODAL LOGIKK ---
         const modalOverlay = document.getElementById('log-modal');
         const modalLogWindow = document.getElementById('modal-log-window');
 
+        // --- MODAL LOGIKK ---
         function openModal() {
             modalOverlay.style.display = 'flex';
             modalLogWindow.scrollTop = modalLogWindow.scrollHeight;
@@ -701,32 +706,6 @@
         
         function handleEscape(e) {
             if (e.key === 'Escape') closeModal();
-        }
-        // --------------------
-        
-        function downloadLatencyData() {
-            if (latencyData.length === 0) {
-                alert("Ingen data å laste ned. Spill noen noter først!");
-                return;
-            }
-
-            // Bygg CSV innhold - UTFØRLIG VERSJON FOR FORSKNING
-            let csvContent = "data:text/csv;charset=utf-8,";
-            csvContent += "Timestamp,Event,MIDI_Note,Velocity,Latency_ms,Lookahead_Setting_ms,Status\n";
-            
-            latencyData.forEach(function(row) {
-                csvContent += `${row.timestamp},${row.event},${row.note},${row.velocity || 0},${row.latency_ms},${row.current_lookahead},SUCCESS\n`;
-            });
-
-            const encodedUri = encodeURI(csvContent);
-            const link = document.createElement("a");
-            link.setAttribute("href", encodedUri);
-            link.setAttribute("download", `klaviator_research_data_${new Date().getTime()}.csv`);
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            
-            log('info', `Lastet ned forskningsrapport (${latencyData.length} rader).`);
         }
 
         // --- BIBLIOTEK LOGIKK ---
@@ -764,23 +743,19 @@
                     document.getElementById('midi-status').style.color = "var(--gold-bright)";
                 });
         }
-        // --------------------
 
-        // --- DATAINNSAMLING (For Bachelor Rapport) ---
-        let latencyData = []; // Array for å lagre alle målinger
+        // --- LATENCY MÅLING & DATAINNSAMLING ---
+        let latencyData = []; 
+        const pendingNotes = new Map(); 
 
         function recordLatency(latency, note, type) {
-            // Vi tar bare vare på de siste 10 000 punktene så ikke nettleseren krasjer
-            if (latencyData.length > 10000) {
-                latencyData.shift(); 
-            }
-            
+            if (latencyData.length > 10000) latencyData.shift(); 
             latencyData.push({
                 timestamp: new Date().toISOString(),
                 event: type,
                 note: note,
                 latency_ms: latency,
-                current_lookahead: numberInput.value // Lagrer også hva offset-slideren stod på
+                current_lookahead: document.getElementById('offset-input').value
             });
         }
 
@@ -789,16 +764,10 @@
                 alert("Ingen data å laste ned. Spill noen noter først!");
                 return;
             }
-
-            // Bygg CSV innhold
-            let csvContent = "data:text/csv;charset=utf-8,";
-            csvContent += "Tidspunkt,Hendelse,Note,Latency(ms),Lookahead_Innstilling(ms)\n"; // Header
-            
-            latencyData.forEach(function(row) {
+            let csvContent = "data:text/csv;charset=utf-8,Tidspunkt,Hendelse,Note,Latency(ms),Lookahead_Innstilling(ms)\n";
+            latencyData.forEach(row => {
                 csvContent += `${row.timestamp},${row.event},${row.note},${row.latency_ms},${row.current_lookahead}\n`;
             });
-
-            // Lag nedlastingslenke
             const encodedUri = encodeURI(csvContent);
             const link = document.createElement("a");
             link.setAttribute("href", encodedUri);
@@ -806,30 +775,23 @@
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
-            
             log('info', `Lastet ned CSV-rapport med ${latencyData.length} datapunkter.`);
         }
-        // --------------------
 
-        // --- LYD SYNTHESIZER (SOUNDFONT SAMPLES) ---
+        // --- LYD SYNTHESIZER ---
         let audioCtx;
         let isAudioEnabled = false;
         let pianoPlayer;
-        const activeNotes = {}; // Ordbok for å holde styr på lyder som spilles
+        const activeNotes = {};
 
         async function toggleAudio() {
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             isAudioEnabled = !isAudioEnabled;
             const btn = document.getElementById('audio-toggle');
-            
             if (isAudioEnabled) {
                 audioCtx.resume();
                 btn.innerText = "⌛ LASTER LYD...";
                 btn.disabled = true;
-                
                 try {
                     pianoPlayer = await Soundfont.instrument(audioCtx, 'acoustic_grand_piano');
                     btn.innerText = "🔊 LYD PÅ";
@@ -839,9 +801,7 @@
                 } catch (e) {
                     log('error', 'Kunne ikke laste piano-samples.');
                     btn.innerText = "🔇 FEIL";
-                } finally {
-                    btn.disabled = false;
-                }
+                } finally { btn.disabled = false; }
             } else {
                 btn.innerText = "🔇 LYDLØS";
                 btn.style.borderColor = "var(--cyan)";
@@ -853,71 +813,40 @@
 
         function playNoteSound(note, velocity) {
             if (!isAudioEnabled || !pianoPlayer) return;
-            
-            // Hvis noten allerede spilles, stopp den gamle instansen først
-            if (activeNotes[note]) {
-                activeNotes[note].stop();
-            }
-            
-            // Start ny lyd og lagre referansen
-            activeNotes[note] = pianoPlayer.play(note, audioCtx.currentTime, { 
-                gain: velocity / 127,
-                decay: 2 // Gir en naturlig etterklang
-            });
+            if (activeNotes[note]) activeNotes[note].stop();
+            activeNotes[note] = pianoPlayer.play(note, audioCtx.currentTime, { gain: velocity / 127, decay: 2 });
         }
 
         function stopNoteSound(note) {
             if (!pianoPlayer || !activeNotes[note]) return;
-            
-            // Stopp nøyaktig denne noten med en myk fade-out
             activeNotes[note].stop(audioCtx.currentTime + 0.1);
             delete activeNotes[note];
         }
-        // ----------------------------------------
 
-        // UI Sync for Offset Slider
-        const slider = document.getElementById('offset-slider');
-        const numberInput = document.getElementById('offset-input');
-
-        let syncTimeout;
+        // --- UI SYNC ---
         function syncOffset(val) {
             let num = parseInt(val);
             if(isNaN(num)) return;
-            if(num < 0) num = 0;
-            if(num > 2000) num = 2000; 
-            
-            slider.value = num;
-            numberInput.value = num;
-            
-            // DEBOUNCE: Vent 50ms før vi sender til serveren
-            clearTimeout(syncTimeout);
-            syncTimeout = setTimeout(() => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ action: "set_offset", value: num }));
-                    log('info', `Look-ahead satt til ${num}ms`);
-                }
-            }, 50);
+            document.getElementById('offset-slider').value = num;
+            document.getElementById('offset-input').value = num;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: "set_offset", value: num }));
+            }
         }
 
         function adjustOffset(change) {
-            let current = parseInt(numberInput.value);
+            let current = parseInt(document.getElementById('offset-input').value);
             syncOffset(current + change);
         }
 
-        // --- VISUAL TELEMETRY (CANVAS) ---
+        // --- VISUAL TELEMETRY ---
         const canvas = document.getElementById('piano-roll-canvas');
         const ctx = canvas.getContext('2d');
         let blocks = [];
         let activeBlocks = {};
 
         function handleNoteOn(note) {
-            // Map C3 (48) to C7 (96) over the 150px height. Range = 48 notes.
-            // 150 / 48 = ~3.125 px per note.
-            // Note 96 -> y = 0. Note 48 -> y = 150.
             let yPos = 150 - ((note - 48) * 3.125); 
-            if (yPos < 0) yPos = 0;
-            if (yPos > 146) yPos = 146;
-
             const block = { x: canvas.width, y: yPos, w: 4, active: true, note: note };
             blocks.push(block);
             activeBlocks[note] = block;
@@ -931,54 +860,26 @@
         }
 
         function renderTelemetry() {
-            // Tøm canvas helt for å unngå "blødning" (trails)
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            // Tegn rutenett (horisontale linjer for oktaver)
             ctx.strokeStyle = 'rgba(212, 175, 55, 0.15)';
-            ctx.lineWidth = 1;
             [37.5, 75, 112.5].forEach(y => {
-                ctx.beginPath();
-                ctx.moveTo(0, y);
-                ctx.lineTo(canvas.width, y);
-                ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
             });
-
-            // Oppdater og tegn noter
             for (let i = blocks.length - 1; i >= 0; i--) {
                 let b = blocks[i];
-                
-                // Flytt mot venstre
                 b.x -= 4; 
-                
-                // Hvis tangenten fortsatt holdes nede, strekk blokken bakover
-                if (b.active) {
-                    b.w += 4; 
-                }
-                
-                // Fargelegging: Svarte tangenter er cyan, hvite er gull
+                if (b.active) b.w += 4; 
                 const isBlackKey = [1, 3, 6, 8, 10].includes(b.note % 12);
                 ctx.fillStyle = isBlackKey ? 'rgba(0, 229, 255, 0.9)' : 'rgba(212, 175, 55, 0.9)';
-                ctx.shadowColor = isBlackKey ? 'rgba(0, 229, 255, 0.6)' : 'rgba(212, 175, 55, 0.6)';
-                ctx.shadowBlur = 8;
-                
-                // Tegn rektangelet
                 ctx.fillRect(b.x, b.y, b.w, 3);
-                ctx.shadowBlur = 0;
-
-                // Slett blokken hvis den har forlatt skjermen
-                if (b.x + b.w < -10) {
-                    blocks.splice(i, 1);
-                }
+                if (b.x + b.w < -10) blocks.splice(i, 1);
             }
             requestAnimationFrame(renderTelemetry);
         }
-        renderTelemetry(); 
-        // ----------------------------------------
+        renderTelemetry();
 
-
+        // --- WEBSOCKET KOMMUNIKASJON ---
         function connectWebSocket() {
-            // Bruker automatisk samme IP som nettsiden ble lastet fra
             const serverIP = window.location.hostname;
             ws = new WebSocket(`ws://${serverIP}:8000/ws/unity`);
 
@@ -986,150 +887,124 @@
                 statusIndicator.classList.add('connected');
                 statusText.innerText = "TILKOBLET";
                 statusText.style.color = "var(--success)";
-                log('info', 'WebSocket-bro etablert med Hjernen.');
-                refreshLibrary(); // Last biblioteket når vi kobler til
+                log('info', 'WebSocket-bro etablert.');
+                refreshLibrary();
             };
 
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
                 
+                // HVORFOR: Håndterer maskinvare-status (Connected/Disconnected)
+                if (data.event === "hw_status") {
+                    const statusInd = document.getElementById('mcu-status');
+                    const statusTxt = document.getElementById('mcu-text');
+                    if (data.data.status === "connected") {
+                        statusInd.classList.add('connected');
+                        statusTxt.innerText = "TILKOBLET";
+                        statusTxt.style.color = "var(--success)";
+                    } else {
+                        statusInd.classList.remove('connected');
+                        statusTxt.innerText = "FRAKOBLET";
+                        statusTxt.style.color = "var(--danger)";
+                    }
+                    return;
+                }
+
+                if (data.event === "serial_log") {
+                    const isSend = data.data.type === "send";
+                    const msg = data.data.message.trim();
+                    if (isSend) {
+                        pendingNotes.set(msg, performance.now());
+                    } else if (pendingNotes.has(msg)) {
+                        const rtt = (performance.now() - pendingNotes.get(msg)).toFixed(2);
+                        cpuLatencyText.innerText = rtt + "ms";
+                        cpuLatencyText.style.color = rtt < 10 ? "var(--success)" : (rtt < 30 ? "var(--gold)" : "var(--danger)");
+                        recordLatency(rtt, msg, "hardware_rtt");
+                        pendingNotes.delete(msg);
+                    }
+                    // Logg kun hvis vi ikke spiller av en sang (for ytelse)
+                    if (!isLoggingPaused) {
+                        log(isSend ? "send" : "recv", `${isSend ? "TX >>" : "RX <<"} ${msg}`);
+                    }
+                    return;
+                }
+
                 if (data.event === "playback_start") {
-                    latencyData = []; // TØM GAMLE DATA
-                    currentSongName = data.data.file;
-                    songStartTime = Date.now();
-                    log('info', `START: ${data.data.file} (${data.data.total_notes} noter)`);
+                    latencyData = [];
+                    isLoggingPaused = true; // PAUSE LOGGING
+                    log('info', `START: ${data.data.file} (Logg deaktivert for fart)`);
                     return;
                 }
 
                 if (data.event === "playback_finish") {
+                    isLoggingPaused = false; // REAKTIVER LOGGING
                     log('info', `FERDIG: Avspilling fullført.`);
                     return;
                 }
 
-                if (data.event === "bpm_change") {
-                    document.getElementById('bpm-value').innerText = data.data.bpm;
-                    log('info', `Tempo: ${data.data.bpm} BPM`);
-                    return;
-                }
-                
-                if (data.event === "system_halt") {
-                    log('error', 'AVBRUDD: Systemet ble stoppet.');
-                    if (pianoPlayer) pianoPlayer.stop();
-                    return;
-                }
-
-                const latency = Date.now() - data.data.timestamp;
-                recordLatency(latency, data.data.note, data.event);
-                
-                // PERFORMANCE HACK: Oppdater tekst-felt kun når nettleseren har tid
-                requestAnimationFrame(() => {
-                    cpuLatencyText.innerText = latency + "ms";
-                    if(latency > 25) { cpuLatencyText.style.color = "var(--danger)"; } 
-                    else { cpuLatencyText.style.color = "var(--cyan)"; }
-                });
-
-                if(data.event === "note_on") {
+                if (data.event === "note_on") {
                     handleNoteOn(data.data.note);
                     playNoteSound(data.data.note, data.data.velocity);
-                    const btn = document.querySelector(`button[onclick="sendNote(${data.data.note})"]`);
-                    if(btn) btn.classList.add('active');
-                } else if(data.event === "note_off") {
+                } else if (data.event === "note_off") {
                     handleNoteOff(data.data.note);
                     stopNoteSound(data.data.note);
-                    const btn = document.querySelector(`button[onclick="sendNote(${data.data.note})"]`);
-                    if(btn) btn.classList.remove('active');
                 }
             };
 
             ws.onclose = () => {
                 statusIndicator.classList.remove('connected');
-                statusText.innerText = "PRØVER PÅ NYTT...";
+                statusText.innerText = "FRAKOBLET";
                 statusText.style.color = "var(--danger)";
-                log('error', 'Forbindelse brutt. Forsøker å gjenopprette om 2s...');
-                setTimeout(connectWebSocket, 2000); // AUTO-RECONNECT
+                setTimeout(connectWebSocket, 2000);
             };
         }
 
         function sendNote(note) {
-            fetch(`/api/test_note/${note}`)
-                .then(response => response.json())
-                .then(data => log('send', `SENDER: Manuell puls for Note ${note}`))
-                .catch(error => log('error', `FEIL: Node ${note} svarer ikke.`));
+            fetch(`/api/test_note/${note}`);
         }
         
         function uploadMidi() {
             const input = document.getElementById('midi-upload');
             if(input.files.length === 0) return;
-            
-            const file = input.files[0];
-            document.getElementById('midi-status').innerText = file.name;
-            document.getElementById('midi-status').style.color = "var(--gold-bright)";
-            
             const formData = new FormData();
-            formData.append('file', file);
-            
-            log('info', `Laster opp sekvens: ${file.name}...`);
-            
-            fetch('/api/upload_midi', {
-                method: 'POST',
-                body: formData
-            })
-            .then(res => res.json())
-            .then(data => {
-                log('info', `Opplasting vellykket. Autonom sekvens startet!`);
-            })
-            .catch(err => log('error', 'Feil ved opplasting av MIDI.'));
+            formData.append('file', input.files[0]);
+            log('info', `Laster opp: ${input.files[0].name}...`);
+            fetch('/api/upload_midi', { method: 'POST', body: formData });
         }
 
         function controlPlayback(action) {
-            fetch(`/api/playback/${action}`)
-                .then(res => res.json())
-                .then(data => {
-                    log('info', `Avspilling: ${action.toUpperCase()}`);
-                    if (action === 'stop' || action === 'pause') {
-                        // Stopp all lyd umiddelbart ved pause/stopp
-                        if (pianoPlayer) pianoPlayer.stop();
-                    }
-                })
-                .catch(err => log('error', 'Kunne ikke kommunisere med Hjernen.'));
+            fetch(`/api/playback/${action}`);
         }
 
         function triggerEStop() {
-            log('error', '!!! SYSTEM HALTED - E-STOP AKTIVERT !!!');
             fetch('/api/estop');
         }
 
-        function log(type, message) {
-            const time = new Date().toISOString().substring(11, 23);
-            
-            let colorClass = 'log-info';
-            if (type === 'error') colorClass = 'log-error';
-            if (type === 'send') colorClass = 'log-send';
-            if (type === 'recv') colorClass = 'log-recv';
+        let isLoggingPaused = false;
 
-            const logHtml = `<span class="log-time">[${time}]</span> <span class="${colorClass}">${message}</span>`;
+        function log(type, message) {
+            if (isLoggingPaused && (type === 'send' || type === 'recv')) return;
+
+            const time = new Date().toISOString().substring(11, 23);
+            const colorClass = type === 'error' ? 'log-error' : (type === 'send' ? 'log-send' : (type === 'recv' ? 'log-recv' : 'log-info'));
             
-            const divMain = document.createElement('div');
-            divMain.innerHTML = logHtml;
-            logWindow.appendChild(divMain);
+            const div = document.createElement('div');
+            div.innerHTML = `<span class="log-time">[${time}]</span> <span class="${colorClass}">${message}</span>`;
             
-            // PERFORMANCE HACK: Begrens antall linjer i loggen for å spare CPU
-            if (logWindow.children.length > 50) {
+            logWindow.appendChild(div);
+            while (logWindow.children.length > 30) {
                 logWindow.removeChild(logWindow.firstChild);
             }
             logWindow.scrollTop = logWindow.scrollHeight;
 
-            const divModal = document.createElement('div');
-            divModal.innerHTML = logHtml;
-            modalLogWindow.appendChild(divModal);
-            
-            if (modalLogWindow.children.length > 200) {
+            const modalDiv = div.cloneNode(true);
+            modalLogWindow.appendChild(modalDiv);
+            while (modalLogWindow.children.length > 100) {
                 modalLogWindow.removeChild(modalLogWindow.firstChild);
             }
             modalLogWindow.scrollTop = modalLogWindow.scrollHeight;
         }
 
-        // Init
         connectWebSocket();
     </script>
 </body>

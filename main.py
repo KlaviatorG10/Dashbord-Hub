@@ -10,112 +10,134 @@ import serial
 import serial.tools.list_ports
 import threading
 import queue
+from kdaa_logic import KDAAScheduler
 
 app = FastAPI(title="Klaviator Dashboard")
 
-# Finn mappen der main.py ligger
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
-# --- MODULÆR ARKITEKTUR: HJERNEN (Mapping Logic & Hardware) ---
 class HardwareController:
     def __init__(self):
         self.look_ahead_ms = 50
-        self.serial_port = None
+        self.serial_ports = []
         self.is_connected = False
         self.loop = None
         self.send_queue = queue.Queue()
+        self.scheduler = KDAAScheduler()
+        self.sent_timestamps = {} # For RTT måling
 
-    def _try_connect_serial(self):
-        """Forsøker å finne og koble til nRF54L15 over UART"""
-        if self.is_connected:
-            return
-
-        try:
-            ports = list(serial.tools.list_ports.comports())
-            target_port = None
-            
-            jlink_ports = [p.device for p in ports if "usbmodem" in p.device.lower()]
-            if jlink_ports:
-                jlink_ports.sort(reverse=True) 
-                target_port = jlink_ports[0]
-            
-            if target_port:
-                # Vi bruker en blokkerende serieport i en egen tråd
-                self.serial_port = serial.Serial(target_port, 115200, timeout=1)
-                self.is_connected = True
-                print(f"[HARDWARE] Tilkoblet mikrokontroller på {target_port}")
-                
-                # Lagre referanse til event-loopen for å kunne sende WebSockets fra tråden
-                self.loop = asyncio.get_running_loop()
-                
-                # Start lytter- og sender-tråden
-                thread = threading.Thread(target=self._serial_worker_thread, daemon=True)
-                thread.start()
-            else:
-                self.is_connected = False
-        except Exception as e:
-            self.is_connected = False
-            print(f"[HARDWARE] Feil under tilkobling: {e}")
-
-    def _serial_worker_thread(self):
-        """Kjører i en egen tråd: Håndterer all kommunikasjon uten å blokkere Hjernen"""
-        print("[HARDWARE] Nervesystem-tråd startet.")
-        while self.is_connected and self.serial_port:
-            try:
-                # 1. LES FRA BRIKKEN (RX)
-                if self.serial_port.in_waiting > 0:
-                    line = self.serial_port.readline().decode('utf-8', errors='ignore').strip()
-                    if line:
-                        print(f"[BRIKKE SVARER] {line}")
-                        if self.loop:
-                            asyncio.run_coroutine_threadsafe(
-                                broadcast_event("serial_log", {"type": "receive", "message": line}), 
-                                self.loop
-                            )
-                
-                # 2. SEND TIL BRIKKEN (TX)
-                try:
-                    cmd = self.send_queue.get_nowait()
-                    self.serial_port.write(cmd.encode('utf-8'))
-                    if self.loop:
-                        asyncio.run_coroutine_threadsafe(
-                            broadcast_event("serial_log", {"type": "send", "message": cmd.strip()}), 
-                            self.loop
-                        )
-                except queue.Empty:
-                    pass
-                
-                time.sleep(0.001) # Unngå 100% CPU
-                
-            except Exception:
-                break
-        self.is_connected = False
-
-    def set_look_ahead(self, ms: int):
-        self.look_ahead_ms = ms
-        print(f"[HJERNE] Look-ahead oppdatert til {ms}ms")
-
-    async def actuate(self, note: int, velocity: int, is_on: bool):
-        """Legger kommando i køen (lynraskt)"""
-        if not self.is_connected:
-            self._try_connect_serial()
-        
-        state = "ON" if is_on else "OFF"
-        cmd = f"{state}:{note}:{velocity}\n"
+    def send_kdaa_event(self, event):
+        if event['type'] == 'MOVE':
+            cmd = f"M:{event['hand'][0]}:{int(event['pos'])}:{int(event['timestamp'])}\n"
+        else:
+            cmd = f"S:{event['hand'][0]}:{event['note']}:{event['vel']}:{int(event['timestamp'])}\n"
         self.send_queue.put(cmd)
 
-# Initierer maskinvarekontrolleren (Hjernen)
+    def send_sync(self):
+        self.send_queue.put("SYNC:0\n")
+
+    def _try_connect_serial(self):
+        if self.is_connected:
+            return
+        try:
+            target_port = "/dev/tty.usbmodem0010518293143"
+            print(f"\n[HARDWARE] Kobler til nRF54LM20 på {target_port}...")
+
+            try:
+                # Åpner porten med 1M Baud og Hardware Flow Control (RTS/CTS)
+                ser = serial.Serial(
+                    port=target_port, 
+                    baudrate=1000000, 
+                    rtscts=True, 
+                    timeout=0
+                )
+                self.serial_ports.append(ser)
+                print(f"  - TILKOBLET: {target_port} @ 1M Baud med RTS/CTS")
+                self.is_connected = True
+                self.loop = asyncio.get_running_loop()
+                thread = threading.Thread(target=self._serial_worker_thread, daemon=True)
+                thread.start()
+            except Exception as e:
+                print(f"  - KUNNE IKKE ÅPNE {target_port}: {e}")
+                self.is_connected = False
+
+        except Exception as e:
+            self.is_connected = False
+            print(f"[HARDWARE] Kritisk feil under tilkobling: {e}")
+
+    def _serial_worker_thread(self):
+        print(f"[HARDWARE] Nervesystem-tråd startet. Lytter på {len(self.serial_ports)} porter.")
+        rx_buffers = {ser.port: "" for ser in self.serial_ports}
+        while self.is_connected and self.serial_ports:
+            try:
+                # 1. SEND LOGIKK (med tidsstempling)
+                while not self.send_queue.empty():
+                    try:
+                        cmd = self.send_queue.get_nowait()
+                        encoded_cmd = cmd.encode('utf-8')
+
+                        # Lagre tidsstempel for RTT-måling (kun for kommandoer som starter med M: eller S:)
+                        if cmd.startswith(('M:', 'S:')):
+                            self.sent_timestamps[cmd.strip()] = time.perf_counter()
+
+                        for ser in self.serial_ports:
+                            ser.write(encoded_cmd)
+
+                        if self.loop:
+                            asyncio.run_coroutine_threadsafe(
+                                broadcast_event("serial_log", {"type": "send", "message": cmd.strip()}),
+                                self.loop
+                            )
+                    except queue.Empty:
+                        break
+
+                # 2. MOTTAK LOGIKK (med RTT-beregning)
+                for ser in self.serial_ports:
+                    if ser.in_waiting > 0:
+                        data = ser.read(ser.in_waiting).decode('utf-8', errors='ignore')
+                        rx_buffers[ser.port] += data
+                        if "\n" in rx_buffers[ser.port]:
+                            lines = rx_buffers[ser.port].split("\n")
+                            rx_buffers[ser.port] = lines.pop()
+                            for line in lines:
+                                line = line.strip()
+                                if line:
+                                    # Sjekk om dette er et ekko for en sendt kommando
+                                    if line in self.sent_timestamps:
+                                        latency_ms = (time.perf_counter() - self.sent_timestamps[line]) * 1000
+                                        del self.sent_timestamps[line] # Rydd opp
+                                        if self.loop:
+                                            asyncio.run_coroutine_threadsafe(
+                                                broadcast_event("rtt_update", {"latency": round(latency_ms, 2)}),
+                                                self.loop
+                                            )
+
+                                    if self.loop:
+                                        asyncio.run_coroutine_threadsafe(
+                                            broadcast_event("serial_log", {"type": "receive", "message": line}),
+                                            self.loop
+                                        )
+                                        asyncio.run_coroutine_threadsafe(
+                                            broadcast_event("hw_status", {"status": "connected", "port": ser.port}),
+                                            self.loop
+                                        )
+                time.sleep(0.0001)
+            except Exception as e:
+                print(f"[HARDWARE] Tråd-feil: {e}")
+                break
+        self.is_connected = False
+    def set_look_ahead(self, ms: int):
+        self.look_ahead_ms = ms
+
 hardware = HardwareController()
 
 @app.on_event("startup")
 async def startup_event():
     hardware._try_connect_serial()
 
-# --- GLOBALE VARIABLER (Dashboard State) ---
 connected_clients = []
 current_playback_task = None
 is_paused = False
-
 MIDI_LIB_PATH = os.path.join(current_dir, "midi_library")
 
 @app.get("/api/library")
@@ -162,6 +184,7 @@ async def websocket_endpoint(websocket: WebSocket):
         connected_clients.remove(websocket)
 
 async def broadcast_event(event_type: str, data: dict):
+    if not connected_clients: return
     message = json.dumps({"event": event_type, "data": data})
     for client in connected_clients:
         try:
@@ -169,50 +192,104 @@ async def broadcast_event(event_type: str, data: dict):
         except Exception:
             pass
 
-async def process_note_event(event_type: str, note: int, velocity: int):
-    is_on = (event_type == "note_on")
-    await hardware.actuate(note, velocity, is_on)
-    
-    async def delayed_broadcast():
-        current_offset = hardware.look_ahead_ms
-        if current_offset > 0:
-            await asyncio.sleep(current_offset / 1000.0)
-        await broadcast_event(event_type, {"note": note, "velocity": velocity, "timestamp": int(time.time() * 1000)})
-    
-    asyncio.create_task(delayed_broadcast())
-
-@app.get("/api/test_note/{note_id}")
-async def trigger_test_note(note_id: int):
-    asyncio.create_task(process_note_event("note_on", note_id, 100))
-    await asyncio.sleep(0.5)
-    asyncio.create_task(process_note_event("note_off", note_id, 0))
-    return {"status": f"Spilte note {note_id}"}
-
 async def play_midi_background(filepath: str, delete_after: bool = True):
     global is_paused
     try:
-        mid = mido.MidiFile(filepath)
-        total_notes = sum(1 for msg in mid if msg.type == 'note_on' and msg.velocity > 0)
-        await broadcast_event("playback_start", {"file": os.path.basename(filepath), "total_notes": total_notes})
-        for msg in mid:
-            while is_paused: await asyncio.sleep(0.1)
-            if msg.time > 0:
-                st = msg.time
-                while st > 0:
-                    if is_paused: await asyncio.sleep(0.1)
-                    else:
-                        chunk = min(st, 0.02)
-                        await asyncio.sleep(chunk)
-                        st -= chunk
-            if msg.type == 'note_on':
-                asyncio.create_task(process_note_event("note_on", msg.note, msg.velocity)) if msg.velocity > 0 else asyncio.create_task(process_note_event("note_off", msg.note, 0))
-            elif msg.type == 'note_off':
-                asyncio.create_task(process_note_event("note_off", msg.note, 0))
+        # 1. Planlegg hele sangen (Lynraskt i Python)
+        schedule = hardware.scheduler.generate_schedule(filepath)
+        total_notes = sum(1 for e in schedule if e['type'] == 'STRIKE' and e['vel'] > 0)
+        
+        await broadcast_event("playback_start", {
+            "file": os.path.basename(filepath), 
+            "total_notes": total_notes, 
+            "mode": "KDAA Hybrid Streaming"
+        })
+
+        # 2. HYBRID STREAMING: Send de første 2 sekundene med data umiddelbart
+        initial_buffer_ms = 2000
+        buffered_count = 0
+        for event in schedule:
+            if event['timestamp'] < initial_buffer_ms:
+                hardware.send_kdaa_event(event)
+                buffered_count += 1
+            else:
+                break
+        
+        # 3. Start avspilling på brikken umiddelbart etter initial buffer
+        hardware.send_sync()
+        start_time = time.perf_counter()
+        
+        # 4. Hovedløkke: Håndterer både Drip-feeding og Unity-synkronisering
+        event_idx = 0
+        schedule_len = len(schedule)
+        
+        while event_idx < schedule_len:
+            event = schedule[event_idx]
+            
+            # DRIP-FEEDING: Pass på at brikken alltid har de neste 500ms med data
+            # Vi bruker 1000ms (1 sek) som vindu for å være helt trygge mot OS-jitter
+            now_ms = (time.perf_counter() - start_time) * 1000
+            if event['timestamp'] < now_ms + 1000:
+                # Hvis eventet ikke allerede er sendt i initial buffer, send det nå
+                if event_idx >= buffered_count:
+                    hardware.send_kdaa_event(event)
+                
+                # Hvis dette er et STRIKE-event, håndter Unity-visualisering asynkront
+                if event['type'] == 'STRIKE':
+                    asyncio.create_task(handle_visual_sync(event, start_time))
+                
+                event_idx += 1
+            else:
+                # Vent litt før vi sjekker neste event for å ikke kvele CPU
+                await asyncio.sleep(0.005)
+
+        # Vent til siste note er ferdig før vi avslutter
+        await asyncio.sleep(2.0)
         await broadcast_event("playback_finish", {})
+        
     except asyncio.CancelledError:
+        hardware.send_queue.put("STOP\n") 
         await broadcast_event("system_halt", {})
+    except Exception as e:
+        print(f"[AVSPILLING] KDAA Kritisk feil: {e}")
     finally:
         if delete_after and os.path.exists(filepath): os.remove(filepath)
+
+async def handle_visual_sync(event, start_time):
+    """Håndterer synkronisering mot Unity i en egen asynkron oppgave."""
+    global is_paused
+    target_t = event['visual_target_t'] / 1000.0
+    while True:
+        if is_paused:
+            # Ved pause må vi bare vente, start_time justeres i hovedloopen hvis nødvendig
+            # (Pause-logikk bør forbedres for hybrid-streaming hvis aktuelt)
+            await asyncio.sleep(0.05)
+            continue
+            
+        now = time.perf_counter()
+        offset = hardware.look_ahead_ms / 1000.0
+        remaining = (target_t + offset) - (now - start_time)
+        
+        if remaining <= 0: break
+        if remaining > 0.05: await asyncio.sleep(0.01)
+        else: await asyncio.sleep(0.001)
+        
+    is_on = event['vel'] > 0
+    await broadcast_event("note_on" if is_on else "note_off", {"note": event['note'], "velocity": event['vel']})
+
+@app.get("/api/test_note/{note_id}")
+async def trigger_test_note(note_id: int):
+    if not hardware.is_connected:
+        hardware._try_connect_serial()
+    hardware.send_sync()
+    on_event = {'type': 'STRIKE', 'hand': 'LEFT', 'note': note_id, 'vel': 100, 'timestamp': 100}
+    hardware.send_kdaa_event(on_event)
+    off_event = {'type': 'STRIKE', 'hand': 'LEFT', 'note': note_id, 'vel': 0, 'timestamp': 600}
+    hardware.send_kdaa_event(off_event)
+    await broadcast_event("note_on", {"note": note_id, "velocity": 100})
+    await asyncio.sleep(0.5)
+    await broadcast_event("note_off", {"note": note_id, "velocity": 0})
+    return {"status": f"KDAA Test sendt for note {note_id}"}
 
 @app.get("/api/playback/pause")
 async def pause_playback():
@@ -241,7 +318,8 @@ async def upload_midi(file: UploadFile = File(...)):
     is_paused = False
     file_location = os.path.join(current_dir, f"temp_{file.filename}")
     with open(file_location, "wb+") as file_object:
-        file_object.write(await file.read())
+        content = await file.read()
+        file_object.write(content)
     if current_playback_task and not current_playback_task.done():
         current_playback_task.cancel()
     current_playback_task = asyncio.create_task(play_midi_background(file_location))
@@ -250,6 +328,7 @@ async def upload_midi(file: UploadFile = File(...)):
 @app.get("/api/estop")
 async def emergency_stop():
     global current_playback_task
+    hardware.send_queue.put("STOP\n")
     if current_playback_task and not current_playback_task.done():
         current_playback_task.cancel()
     return {"status": "halted"}
