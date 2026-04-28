@@ -541,7 +541,8 @@
             <span id="mcu-status" class="status-indicator"></span>
             <span id="mcu-text" style="color: var(--text-muted);">IKKE FUNNET</span>
 
-            <button id="audio-toggle" class="panic-btn" style="border-color: var(--cyan); color: var(--cyan); margin-left: 15px;" onclick="toggleAudio()">🔇 LYDLØS</button>
+            <button id="test-mode-toggle" class="panic-btn" style="border-color: var(--gold); color: var(--gold); margin-left: 15px;" onclick="toggleTestMode()">🧪 TEST MODE</button>
+            <button id="audio-toggle" class="panic-btn" style="border-color: var(--cyan); color: var(--cyan);" onclick="toggleAudio()">🔇 LYDLØS</button>
             <button class="panic-btn" onclick="triggerEStop()">NØDSTOPP</button>
         </div>
     </header>
@@ -889,6 +890,7 @@
                 statusText.style.color = "var(--success)";
                 log('info', 'WebSocket-bro etablert.');
                 refreshLibrary();
+                updateTestModeButton();
             };
 
             ws.onmessage = (event) => {
@@ -922,10 +924,8 @@
                         recordLatency(rtt, msg, "hardware_rtt");
                         pendingNotes.delete(msg);
                     }
-                    // Logg kun hvis vi ikke spiller av en sang (for ytelse)
-                    if (!isLoggingPaused) {
-                        log(isSend ? "send" : "recv", `${isSend ? "TX >>" : "RX <<"} ${msg}`);
-                    }
+                    // Logg alltid TX/RX for å kunne feilsøke kommunikasjonen med brikken
+                    log(isSend ? "send" : "recv", `${isSend ? "TX >>" : "RX <<"} ${msg}`);
                     return;
                 }
 
@@ -1003,6 +1003,37 @@
                 modalLogWindow.removeChild(modalLogWindow.firstChild);
             }
             modalLogWindow.scrollTop = modalLogWindow.scrollHeight;
+        }
+
+        // --- TEST MODE TOGGLE ---
+        async function toggleTestMode() {
+            try {
+                const response = await fetch('/api/toggle_test_mode');
+                const data = await response.json();
+                updateTestModeButton();
+                log('info', `Modus byttet til: ${data.mode}`);
+            } catch (err) {
+                log('error', 'Kunne ikke bytte modus');
+            }
+        }
+
+        async function updateTestModeButton() {
+            try {
+                const response = await fetch('/api/get_mode');
+                const data = await response.json();
+                const btn = document.getElementById('test-mode-toggle');
+                if (data.test_mode) {
+                    btn.innerText = "🧪 TEST MODE";
+                    btn.style.borderColor = "var(--gold)";
+                    btn.style.color = "var(--gold)";
+                } else {
+                    btn.innerText = "🤖 PRODUCTION";
+                    btn.style.borderColor = "var(--success)";
+                    btn.style.color = "var(--success)";
+                }
+            } catch (err) {
+                console.log('Kunne ikke hente modus');
+            }
         }
 
         connectWebSocket();

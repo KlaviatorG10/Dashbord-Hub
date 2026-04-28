@@ -23,75 +23,82 @@ class HardwareController:
         self.is_connected = False
         self.loop = None
         self.send_queue = queue.Queue()
-        self.scheduler = KDAAScheduler()
-        self.sent_timestamps = {} # For RTT måling
+        # TEST MODE: True = ingen fysisk simulering, False = full KDAA scheduling
+        self.scheduler = KDAAScheduler(test_mode=True)
+        self.sent_notes = {} # For RTT måling
 
     def send_kdaa_event(self, event):
         if event['type'] == 'MOVE':
-            cmd = f"M:{event['hand'][0]}:{int(event['pos'])}:{int(event['timestamp'])}\n"
+            cmd = f"M:{event['hand'][0]}:{int(event['pos'])}:{max(0, int(event['timestamp']))}\n"
         else:
-            cmd = f"S:{event['hand'][0]}:{event['note']}:{event['vel']}:{int(event['timestamp'])}\n"
+            # MCU format: S:H:N:V:T:D (Hand, Note, Velocity, Timestamp, Duration)
+            duration = event.get('duration', 50)  # Default 50ms hvis ikke spesifisert
+            cmd = f"S:{event['hand'][0]}:{event['note']}:{event['vel']}:{max(0, int(event['timestamp']))}:{int(duration)}\n"
+            if event['vel'] > 0:
+                # Lagre for RTT måling
+                if event['note'] not in self.sent_notes:
+                    self.sent_notes[event['note']] = []
+                self.sent_notes[event['note']].append({
+                    "time": time.perf_counter(),
+                    "velocity": event['vel']
+                })
         self.send_queue.put(cmd)
 
     def send_sync(self):
+        # CRITICAL: Tøm HELE køen før SYNC for å unngå gamle events
+        print("[HARDWARE] Tømmer event kø...")
+        while not self.send_queue.empty():
+            try:
+                self.send_queue.get_nowait()
+            except:
+                break
+        
+        print("[HARDWARE] Sender SYNC:0...")
+        self.sent_notes = {}
         self.send_queue.put("SYNC:0\n")
+        
+        # Send STOP også for ekstra sikkerhet
+        self.send_queue.put("STOP\n")
 
     def _try_connect_serial(self):
-        if self.is_connected:
-            return
+        if self.is_connected: return
+        target_port = "/dev/tty.usbmodem0010518293143"
         try:
-            target_port = "/dev/tty.usbmodem0010518293143"
-            print(f"\n[HARDWARE] Kobler til nRF54LM20 på {target_port}...")
-
-            try:
-                # Åpner porten med 1M Baud og Hardware Flow Control (RTS/CTS)
-                ser = serial.Serial(
-                    port=target_port, 
-                    baudrate=1000000, 
-                    rtscts=True, 
-                    timeout=0
-                )
-                self.serial_ports.append(ser)
-                print(f"  - TILKOBLET: {target_port} @ 1M Baud med RTS/CTS")
-                self.is_connected = True
-                self.loop = asyncio.get_running_loop()
-                thread = threading.Thread(target=self._serial_worker_thread, daemon=True)
-                thread.start()
-            except Exception as e:
-                print(f"  - KUNNE IKKE ÅPNE {target_port}: {e}")
-                self.is_connected = False
-
+            # Roocode krav 1: rtscts=True er KRITISK ved 1M Baud for stabilitet
+            ser = serial.Serial(port=target_port, baudrate=1000000, rtscts=True, timeout=0)
+            self.serial_ports.append(ser)
+            self.is_connected = True
+            self.loop = asyncio.get_running_loop()
+            threading.Thread(target=self._serial_worker_thread, daemon=True).start()
+            print(f"[HARDWARE] Tilkoblet {target_port} med aktiv Hardware Flow Control (RTS/CTS)")
         except Exception as e:
-            self.is_connected = False
-            print(f"[HARDWARE] Kritisk feil under tilkobling: {e}")
+            print(f"[HARDWARE] Tilkoblingsfeil: {e}")
 
     def _serial_worker_thread(self):
-        print(f"[HARDWARE] Nervesystem-tråd startet. Lytter på {len(self.serial_ports)} porter.")
         rx_buffers = {ser.port: "" for ser in self.serial_ports}
-        while self.is_connected and self.serial_ports:
+        commands_sent = 0
+        while self.is_connected:
             try:
-                # 1. SEND LOGIKK (med tidsstempling)
+                # 1. Send data med ØKET pacing for å unngå buffer overflow på MCU
                 while not self.send_queue.empty():
-                    try:
-                        cmd = self.send_queue.get_nowait()
-                        encoded_cmd = cmd.encode('utf-8')
-
-                        # Lagre tidsstempel for RTT-måling (kun for kommandoer som starter med M: eller S:)
-                        if cmd.startswith(('M:', 'S:')):
-                            self.sent_timestamps[cmd.strip()] = time.perf_counter()
-
-                        for ser in self.serial_ports:
-                            ser.write(encoded_cmd)
-
+                    cmd = self.send_queue.get_nowait()
+                    for ser in self.serial_ports:
+                        ser.write(cmd.encode('utf-8'))
+                        # ØKT PAUSE: 2ms mellom hver kommando for å la MCU prosessere
+                        time.sleep(0.002)
+                        
+                        commands_sent += 1
+                        # Debug log for første 50 kommandoer
+                        if commands_sent <= 50:
+                            print(f"[TX #{commands_sent}] {cmd.strip()}")
+                        
                         if self.loop:
                             asyncio.run_coroutine_threadsafe(
                                 broadcast_event("serial_log", {"type": "send", "message": cmd.strip()}),
                                 self.loop
                             )
-                    except queue.Empty:
-                        break
-
-                # 2. MOTTAK LOGIKK (med RTT-beregning)
+                
+                # 2. Motta data (HIT: parsing)
                 for ser in self.serial_ports:
                     if ser.in_waiting > 0:
                         data = ser.read(ser.in_waiting).decode('utf-8', errors='ignore')
@@ -101,237 +108,213 @@ class HardwareController:
                             rx_buffers[ser.port] = lines.pop()
                             for line in lines:
                                 line = line.strip()
-                                if line:
-                                    # Sjekk om dette er et ekko for en sendt kommando
-                                    if line in self.sent_timestamps:
-                                        latency_ms = (time.perf_counter() - self.sent_timestamps[line]) * 1000
-                                        del self.sent_timestamps[line] # Rydd opp
+                                if not line: continue
+                                
+                                # Roocode krav 3: Håndter HIT:<midi_note>
+                                if "HIT:" in line:
+                                    try:
+                                        note_id = int(line.split("HIT:")[1].strip().split()[0])
                                         if self.loop:
-                                            asyncio.run_coroutine_threadsafe(
-                                                broadcast_event("rtt_update", {"latency": round(latency_ms, 2)}),
-                                                self.loop
-                                            )
-
-                                    if self.loop:
-                                        asyncio.run_coroutine_threadsafe(
-                                            broadcast_event("serial_log", {"type": "receive", "message": line}),
-                                            self.loop
-                                        )
-                                        asyncio.run_coroutine_threadsafe(
-                                            broadcast_event("hw_status", {"status": "connected", "port": ser.port}),
-                                            self.loop
-                                        )
+                                            velocity = 100 
+                                            # Finn den spesifikke noten i køen uavhengig av polyfoni-dybde
+                                            if note_id in self.sent_notes and self.sent_notes[note_id]:
+                                                note_data = self.sent_notes[note_id].pop(0)
+                                                rtt = (time.perf_counter() - note_data["time"]) * 1000
+                                                velocity = note_data["velocity"]
+                                                asyncio.run_coroutine_threadsafe(broadcast_event("rtt_update", {"latency": round(rtt, 2)}), self.loop)
+                                            
+                                            # Send note_on - Dashboardet håndterer nå at flere noter er på samtidig
+                                            asyncio.run_coroutine_threadsafe(broadcast_event("note_on", {"note": note_id, "velocity": velocity}), self.loop)
+                                    except Exception as e:
+                                        print(f"[SERIAL] HIT parse feil: {e}")
+                                elif "REL:" in line:
+                                    try:
+                                        note_id = int(line.split("REL:")[1].strip().split()[0])
+                                        if self.loop:
+                                            asyncio.run_coroutine_threadsafe(broadcast_event("note_off", {"note": note_id, "velocity": 0}), self.loop)
+                                    except: pass
+                                
+                                # Logg kun hvis det ikke er støy
+                                elif not any(x in line for x in ["PCA9685", "ERROR", "MOTOR"]):
+                                    if self.loop: 
+                                        asyncio.run_coroutine_threadsafe(broadcast_event("serial_log", {"type": "receive", "message": line}), self.loop)
+                                        # Gjenopprett grønt lys i Dashbordet
+                                        asyncio.run_coroutine_threadsafe(broadcast_event("hw_status", {"status": "connected", "port": ser.port}), self.loop)
                 time.sleep(0.0001)
-            except Exception as e:
-                print(f"[HARDWARE] Tråd-feil: {e}")
-                break
-        self.is_connected = False
-    def set_look_ahead(self, ms: int):
-        self.look_ahead_ms = ms
+            except: break
 
 hardware = HardwareController()
-
-@app.on_event("startup")
-async def startup_event():
-    hardware._try_connect_serial()
-
-connected_clients = []
 current_playback_task = None
 is_paused = False
+
+@app.on_event("startup")
+async def startup(): hardware._try_connect_serial()
+
+connected_clients = []
 MIDI_LIB_PATH = os.path.join(current_dir, "midi_library")
 
+@app.get("/api/estop")
+async def estop():
+    global current_playback_task
+    if current_playback_task: current_playback_task.cancel()
+    hardware.send_queue.put("STOP\n")
+    return {"status": "stopped"}
+
 @app.get("/api/library")
-async def get_midi_library():
-    files = [f for f in os.listdir(MIDI_LIB_PATH) if f.endswith(('.mid', '.midi'))]
-    return {"files": files}
+async def get_lib(): return {"files": [f for f in os.listdir(MIDI_LIB_PATH) if f.endswith(('.mid', '.midi'))]}
 
 @app.get("/api/play_library/{filename}")
-async def play_from_library(filename: str):
+async def play_lib(filename: str):
     global current_playback_task, is_paused
     is_paused = False
-    file_path = os.path.join(MIDI_LIB_PATH, filename)
-    if current_playback_task and not current_playback_task.done():
-        current_playback_task.cancel()
-    current_playback_task = asyncio.create_task(play_midi_background(file_path, delete_after=False))
-    return {"status": "playing", "file": filename}
+    if current_playback_task: current_playback_task.cancel()
+    current_playback_task = asyncio.create_task(play_midi_background(os.path.join(MIDI_LIB_PATH, filename)))
+    return {"status": "playing"}
 
-@app.get("/")
-async def get():
-    index_path = os.path.join(current_dir, "index.html")
-    with open(index_path, "r") as f:
-        html_content = f.read()
-    return HTMLResponse(content=html_content)
-
-@app.get("/logo.png")
-async def get_logo():
-    logo_path = os.path.join(current_dir, "Klaviator Logo Gold.png")
-    return FileResponse(logo_path)
-
-@app.websocket("/ws/unity")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    connected_clients.append(websocket)
-    try:
-        while True:
-            data = await websocket.receive_text()
-            parsed = json.loads(data)
-            if parsed.get("action") == "set_offset":
-                hardware.set_look_ahead(int(parsed.get("value", 50)))
-            elif parsed.get("action") == "play_file":
-                filename = parsed.get("value")
-                asyncio.create_task(play_from_library(filename))
-    except WebSocketDisconnect:
-        connected_clients.remove(websocket)
-
-async def broadcast_event(event_type: str, data: dict):
-    if not connected_clients: return
-    message = json.dumps({"event": event_type, "data": data})
-    for client in connected_clients:
-        try:
-            await client.send_text(message)
-        except Exception:
-            pass
-
-async def play_midi_background(filepath: str, delete_after: bool = True):
-    global is_paused
-    try:
-        # 1. Planlegg hele sangen (Lynraskt i Python)
-        schedule = hardware.scheduler.generate_schedule(filepath)
-        total_notes = sum(1 for e in schedule if e['type'] == 'STRIKE' and e['vel'] > 0)
-        
-        await broadcast_event("playback_start", {
-            "file": os.path.basename(filepath), 
-            "total_notes": total_notes, 
-            "mode": "KDAA Hybrid Streaming"
-        })
-
-        # 2. HYBRID STREAMING: Send de første 2 sekundene med data umiddelbart
-        initial_buffer_ms = 2000
-        buffered_count = 0
-        for event in schedule:
-            if event['timestamp'] < initial_buffer_ms:
-                hardware.send_kdaa_event(event)
-                buffered_count += 1
-            else:
-                break
-        
-        # 3. Start avspilling på brikken umiddelbart etter initial buffer
-        hardware.send_sync()
-        start_time = time.perf_counter()
-        
-        # 4. Hovedløkke: Håndterer både Drip-feeding og Unity-synkronisering
-        event_idx = 0
-        schedule_len = len(schedule)
-        
-        while event_idx < schedule_len:
-            event = schedule[event_idx]
-            
-            # DRIP-FEEDING: Pass på at brikken alltid har de neste 500ms med data
-            # Vi bruker 1000ms (1 sek) som vindu for å være helt trygge mot OS-jitter
-            now_ms = (time.perf_counter() - start_time) * 1000
-            if event['timestamp'] < now_ms + 1000:
-                # Hvis eventet ikke allerede er sendt i initial buffer, send det nå
-                if event_idx >= buffered_count:
-                    hardware.send_kdaa_event(event)
-                
-                # Hvis dette er et STRIKE-event, håndter Unity-visualisering asynkront
-                if event['type'] == 'STRIKE':
-                    asyncio.create_task(handle_visual_sync(event, start_time))
-                
-                event_idx += 1
-            else:
-                # Vent litt før vi sjekker neste event for å ikke kvele CPU
-                await asyncio.sleep(0.005)
-
-        # Vent til siste note er ferdig før vi avslutter
-        await asyncio.sleep(2.0)
-        await broadcast_event("playback_finish", {})
-        
-    except asyncio.CancelledError:
-        hardware.send_queue.put("STOP\n") 
-        await broadcast_event("system_halt", {})
-    except Exception as e:
-        print(f"[AVSPILLING] KDAA Kritisk feil: {e}")
-    finally:
-        if delete_after and os.path.exists(filepath): os.remove(filepath)
-
-async def handle_visual_sync(event, start_time):
-    """Håndterer synkronisering mot Unity i en egen asynkron oppgave."""
-    global is_paused
-    target_t = event['visual_target_t'] / 1000.0
-    while True:
-        if is_paused:
-            # Ved pause må vi bare vente, start_time justeres i hovedloopen hvis nødvendig
-            # (Pause-logikk bør forbedres for hybrid-streaming hvis aktuelt)
-            await asyncio.sleep(0.05)
-            continue
-            
-        now = time.perf_counter()
-        offset = hardware.look_ahead_ms / 1000.0
-        remaining = (target_t + offset) - (now - start_time)
-        
-        if remaining <= 0: break
-        if remaining > 0.05: await asyncio.sleep(0.01)
-        else: await asyncio.sleep(0.001)
-        
-    is_on = event['vel'] > 0
-    await broadcast_event("note_on" if is_on else "note_off", {"note": event['note'], "velocity": event['vel']})
-
-@app.get("/api/test_note/{note_id}")
-async def trigger_test_note(note_id: int):
-    if not hardware.is_connected:
-        hardware._try_connect_serial()
-    hardware.send_sync()
-    on_event = {'type': 'STRIKE', 'hand': 'LEFT', 'note': note_id, 'vel': 100, 'timestamp': 100}
-    hardware.send_kdaa_event(on_event)
-    off_event = {'type': 'STRIKE', 'hand': 'LEFT', 'note': note_id, 'vel': 0, 'timestamp': 600}
-    hardware.send_kdaa_event(off_event)
-    await broadcast_event("note_on", {"note": note_id, "velocity": 100})
+@app.get("/api/test_note/{note}")
+async def trigger_test_note(note: int):
+    # Enkel test-funksjon for de virtuelle tangentene
+    hardware.send_kdaa_event({'type': 'STRIKE', 'hand': 'LEFT', 'note': note, 'vel': 100, 'timestamp': 0})
     await asyncio.sleep(0.5)
-    await broadcast_event("note_off", {"note": note_id, "velocity": 0})
-    return {"status": f"KDAA Test sendt for note {note_id}"}
+    hardware.send_kdaa_event({'type': 'STRIKE', 'hand': 'LEFT', 'note': note, 'vel': 0, 'timestamp': 0})
+    return {"status": f"Testet note {note}"}
 
-@app.get("/api/playback/pause")
-async def pause_playback():
-    global is_paused
-    is_paused = True
-    return {"status": "paused"}
+@app.get("/api/toggle_test_mode")
+async def toggle_test_mode():
+    hardware.scheduler.test_mode = not hardware.scheduler.test_mode
+    mode = "TEST" if hardware.scheduler.test_mode else "PRODUCTION"
+    return {"status": "success", "mode": mode, "test_mode": hardware.scheduler.test_mode}
 
-@app.get("/api/playback/resume")
-async def resume_playback():
-    global is_paused
-    is_paused = False
-    return {"status": "resumed"}
-
-@app.get("/api/playback/stop")
-async def stop_playback():
-    global current_playback_task, is_paused
-    is_paused = False
-    if current_playback_task and not current_playback_task.done():
-        current_playback_task.cancel()
-    await broadcast_event("system_halt", {})
-    return {"status": "stopped"}
+@app.get("/api/get_mode")
+async def get_mode():
+    return {"test_mode": hardware.scheduler.test_mode}
 
 @app.post("/api/upload_midi")
 async def upload_midi(file: UploadFile = File(...)):
     global current_playback_task, is_paused
     is_paused = False
-    file_location = os.path.join(current_dir, f"temp_{file.filename}")
-    with open(file_location, "wb+") as file_object:
+    file_path = os.path.join(MIDI_LIB_PATH, file.filename)
+    with open(file_path, "wb") as f:
         content = await file.read()
-        file_object.write(content)
-    if current_playback_task and not current_playback_task.done():
-        current_playback_task.cancel()
-    current_playback_task = asyncio.create_task(play_midi_background(file_location))
+        f.write(content)
+    if current_playback_task: current_playback_task.cancel()
+    current_playback_task = asyncio.create_task(play_midi_background(file_path))
     return {"status": "success", "filename": file.filename}
 
-@app.get("/api/estop")
-async def emergency_stop():
-    global current_playback_task
-    hardware.send_queue.put("STOP\n")
-    if current_playback_task and not current_playback_task.done():
-        current_playback_task.cancel()
-    return {"status": "halted"}
+@app.get("/api/playback/{action}")
+async def control_playback(action: str):
+    global is_paused, current_playback_task
+    if action == "pause": is_paused = True
+    elif action == "resume": is_paused = False
+    elif action == "stop":
+        if current_playback_task: current_playback_task.cancel()
+        hardware.send_queue.put("STOP\n")
+    return {"status": action}
+
+@app.get("/")
+async def get_index():
+    with open(os.path.join(current_dir, "index.html"), "r") as f: return HTMLResponse(f.read())
+
+@app.get("/logo.png")
+async def get_logo(): return FileResponse(os.path.join(current_dir, "Klaviator Logo Gold.png"))
+
+@app.websocket("/ws/unity")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    connected_clients.append(websocket)
+    print(f"[WS] Dashboard tilkoblet. Aktive klienter: {len(connected_clients)}")
+    try:
+        while True:
+            msg = await websocket.receive_text()
+            data = json.loads(msg)
+            if data.get("action") == "play_file": asyncio.create_task(play_lib(data.get("value")))
+    except WebSocketDisconnect:
+        connected_clients.remove(websocket)
+        print(f"[WS] Dashboard frakoblet. Aktive klienter: {len(connected_clients)}")
+
+async def broadcast_event(etype: str, data: dict):
+    if not connected_clients: return
+    msg = json.dumps({"event": etype, "data": data})
+    for c in connected_clients:
+        try: await c.send_text(msg)
+        except: pass
+
+async def play_midi_background(path: str):
+    global is_paused
+    try:
+        schedule = hardware.scheduler.generate_schedule(path)
+        
+        # CRITICAL FIX: Legg til 1000ms offset til ALLE timestamps
+        # Dette gir MCU tid til å starte etter SYNC
+        for event in schedule:
+            event['timestamp'] += 1000
+        
+        print(f"\n{'='*60}")
+        print(f"[PLAY] Schedule generert: {len(schedule)} events")
+        print(f"[PLAY] Første 5 events:")
+        for i, ev in enumerate(schedule[:5]):
+            print(f"  #{i+1}: {ev['type']} note={ev.get('note', 'N/A')} vel={ev.get('vel', 'N/A')} t={ev['timestamp']}ms dur={ev.get('duration', 'N/A')}ms")
+        print(f"{'='*60}\n")
+        
+        await broadcast_event("playback_start", {"file": os.path.basename(path), "total_notes": len(schedule), "mode": "MCU-Master"})
+        
+        # CRITICAL: Send SYNC OG STOP, vent til MCU har prosessert
+        hardware.send_sync()
+        await asyncio.sleep(1.0)  # ØKT TIL 1 SEKUND for å sikre alle gamle events er borte
+        
+        print(f"[PLAY] Starter sending av {len(schedule)} events...")
+        
+        start_t = time.perf_counter()
+        pause_accumulated = 0
+        
+        for idx, event in enumerate(schedule):
+            # Sjekk om vi er på pause
+            if is_paused:
+                pause_start = time.perf_counter()
+                while is_paused:
+                    await asyncio.sleep(0.1)
+                pause_accumulated += (time.perf_counter() - pause_start)
+                
+            # Beregn når vi skal sende denne event
+            # current_time_ms er hvor langt vi er kommet i sangen (minus pause-tid)
+            current_time_ms = (time.perf_counter() - start_t - pause_accumulated) * 1000
+            
+            # time_until_event er hvor lenge til denne event skal skje
+            time_until_event = event['timestamp'] - current_time_ms
+            
+            # Vi sender events 1.5 sekunder i forkant (lookahead buffer)
+            # Dette gir MCU tid til å forberede uten at vi sender ALT på en gang
+            lookahead_ms = 1500
+            
+            # Vent til vi er innenfor lookahead-vinduet
+            while time_until_event > lookahead_ms:
+                await asyncio.sleep(0.005)  # Kortere sleep for bedre presisjon
+                if is_paused: break
+                current_time_ms = (time.perf_counter() - start_t - pause_accumulated) * 1000
+                time_until_event = event['timestamp'] - current_time_ms
+            
+            if not is_paused:
+                hardware.send_kdaa_event(event)
+                # Debug logging for første 10 events
+                if idx < 10:
+                    print(f"[PLAY] Event {idx}: type={event['type']}, timestamp={event['timestamp']}ms, sent_at={current_time_ms:.1f}ms")
+            
+        # Vent til sangen er ferdig (litt lenger enn siste event)
+        if schedule:
+            last_event_time = schedule[-1]['timestamp']
+            remaining_time = (last_event_time / 1000) - (time.perf_counter() - start_t - pause_accumulated)
+            if remaining_time > 0:
+                await asyncio.sleep(remaining_time + 1.0)  # +1 sekund ekstra buffer
+        
+        await broadcast_event("playback_finish", {})
+        print(f"[PLAY] Avspilling fullført")
+    except asyncio.CancelledError:
+        hardware.send_queue.put("STOP\n")
+        print(f"[PLAY] Avspilling avbrutt")
+    except Exception as e:
+        print(f"[PLAY] Feil: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     import uvicorn
