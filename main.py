@@ -35,12 +35,13 @@ class HardwareController:
             duration = event.get('duration', 50)  # Default 50ms hvis ikke spesifisert
             cmd = f"S:{event['hand'][0]}:{event['note']}:{event['vel']}:{max(0, int(event['timestamp']))}:{int(duration)}\n"
             if event['vel'] > 0:
-                # Lagre for RTT måling
+                # Lagre for RTT måling og note_off planlegging
                 if event['note'] not in self.sent_notes:
                     self.sent_notes[event['note']] = []
                 self.sent_notes[event['note']].append({
                     "time": time.perf_counter(),
-                    "velocity": event['vel']
+                    "velocity": event['vel'],
+                    "duration": duration  # Lagre duration for note_off
                 })
         self.send_queue.put(cmd)
 
@@ -53,39 +54,56 @@ class HardwareController:
             except:
                 break
         
-        print("[HARDWARE] Sender SYNC:0...")
+        print("[HARDWARE] Sender SYNC...")
         self.sent_notes = {}
-        self.send_queue.put("SYNC:0\n")
+        self.send_queue.put("SYNC\n")
         
         # Send STOP også for ekstra sikkerhet
         self.send_queue.put("STOP\n")
 
     def _try_connect_serial(self):
         if self.is_connected: return
-        target_port = "/dev/tty.usbmodem0010518293143"
-        try:
-            # Roocode krav 1: rtscts=True er KRITISK ved 1M Baud for stabilitet
-            ser = serial.Serial(port=target_port, baudrate=1000000, rtscts=True, timeout=0)
-            self.serial_ports.append(ser)
-            self.is_connected = True
-            self.loop = asyncio.get_running_loop()
-            threading.Thread(target=self._serial_worker_thread, daemon=True).start()
-            print(f"[HARDWARE] Tilkoblet {target_port} med aktiv Hardware Flow Control (RTS/CTS)")
-        except Exception as e:
-            print(f"[HARDWARE] Tilkoblingsfeil: {e}")
+        
+        # Windows porter
+        potential_ports = ["COM3", "COM4"]
+        
+        # Legg til automatisk deteksjon av JLink porter hvis mulig
+        ports = serial.tools.list_ports.comports()
+        for p in ports:
+            if "JLink" in p.description or "SEGGER" in p.description:
+                if p.device not in potential_ports:
+                    potential_ports.insert(0, p.device)
+
+        for target_port in potential_ports:
+            try:
+                print(f"[HARDWARE] Prøver å koble til {target_port}...")
+                # rtscts=True for stabilitet ved 1M Baud
+                ser = serial.Serial(port=target_port, baudrate=1000000, rtscts=True, timeout=0)
+                self.serial_ports.append(ser)
+                self.is_connected = True
+                try:
+                    self.loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    self.loop = asyncio.get_event_loop()
+                threading.Thread(target=self._serial_worker_thread, daemon=True).start()
+                print(f"[HARDWARE] Tilkoblet {target_port} med aktiv Hardware Flow Control (RTS/CTS)")
+                return # Koblet til én port, det holder for nå
+            except Exception as e:
+                print(f"[HARDWARE] Kunne ikke koble til {target_port}: {e}")
+        
+        if not self.is_connected:
+            print("[HARDWARE] Fant ingen aktive porter (Prøvde COM3, COM4).")
 
     def _serial_worker_thread(self):
         rx_buffers = {ser.port: "" for ser in self.serial_ports}
         commands_sent = 0
         while self.is_connected:
             try:
-                # 1. Send data med ØKET pacing for å unngå buffer overflow på MCU
+                # 1. Send data
                 while not self.send_queue.empty():
                     cmd = self.send_queue.get_nowait()
                     for ser in self.serial_ports:
                         ser.write(cmd.encode('utf-8'))
-                        # ØKT PAUSE: 2ms mellom hver kommando for å la MCU prosessere
-                        time.sleep(0.002)
                         
                         commands_sent += 1
                         # Debug log for første 50 kommandoer
@@ -115,16 +133,29 @@ class HardwareController:
                                     try:
                                         note_id = int(line.split("HIT:")[1].strip().split()[0])
                                         if self.loop:
-                                            velocity = 100 
+                                            velocity = 100
+                                            duration_ms = 100  # Default note_off forsinkelse
+                                            queue_empty = True
                                             # Finn den spesifikke noten i køen uavhengig av polyfoni-dybde
                                             if note_id in self.sent_notes and self.sent_notes[note_id]:
                                                 note_data = self.sent_notes[note_id].pop(0)
                                                 rtt = (time.perf_counter() - note_data["time"]) * 1000
                                                 velocity = note_data["velocity"]
+                                                duration_ms = note_data.get("duration", 100)
+                                                queue_empty = False
                                                 asyncio.run_coroutine_threadsafe(broadcast_event("rtt_update", {"latency": round(rtt, 2)}), self.loop)
                                             
-                                            # Send note_on - Dashboardet håndterer nå at flere noter er på samtidig
+                                            # DIAGNOSE: logg duration og om køen var tom
+                                            print(f"[HIT] note={note_id} vel={velocity} dur={duration_ms}ms queue_empty={queue_empty}")
+                                            
+                                            # Send note_on (MCU-bekreftet)
                                             asyncio.run_coroutine_threadsafe(broadcast_event("note_on", {"note": note_id, "velocity": velocity}), self.loop)
+                                            
+                                            # Planlegg note_off basert på duration (Alternativ C)
+                                            async def schedule_note_off(n, d):
+                                                await asyncio.sleep(d / 1000.0)
+                                                await broadcast_event("note_off", {"note": n, "velocity": 0})
+                                            asyncio.run_coroutine_threadsafe(schedule_note_off(note_id, duration_ms), self.loop)
                                     except Exception as e:
                                         print(f"[SERIAL] HIT parse feil: {e}")
                                 elif "REL:" in line:
@@ -134,9 +165,15 @@ class HardwareController:
                                             asyncio.run_coroutine_threadsafe(broadcast_event("note_off", {"note": note_id, "velocity": 0}), self.loop)
                                     except: pass
                                 
-                                # Logg kun hvis det ikke er støy
-                                elif not any(x in line for x in ["PCA9685", "ERROR", "MOTOR"]):
-                                    if self.loop: 
+                                # Kritiske feilmeldinger sendes alltid til dashbordet
+                                elif "ERROR:BUFFER_FULL" in line:
+                                    print(f"[MCU ERROR] {line}")
+                                    if self.loop:
+                                        asyncio.run_coroutine_threadsafe(broadcast_event("buffer_full", {"message": line}), self.loop)
+                                        asyncio.run_coroutine_threadsafe(broadcast_event("serial_log", {"type": "receive", "message": line}), self.loop)
+                                # Logg kun hvis det ikke er støy (MOTOR-meldinger er støy, PCA9685 er nyttig info)
+                                elif not any(x in line for x in ["MOTOR"]):
+                                    if self.loop:
                                         asyncio.run_coroutine_threadsafe(broadcast_event("serial_log", {"type": "receive", "message": line}), self.loop)
                                         # Gjenopprett grønt lys i Dashbordet
                                         asyncio.run_coroutine_threadsafe(broadcast_event("hw_status", {"status": "connected", "port": ser.port}), self.loop)
@@ -173,11 +210,48 @@ async def play_lib(filename: str):
 
 @app.get("/api/test_note/{note}")
 async def trigger_test_note(note: int):
-    # Enkel test-funksjon for de virtuelle tangentene
-    hardware.send_kdaa_event({'type': 'STRIKE', 'hand': 'LEFT', 'note': note, 'vel': 100, 'timestamp': 0})
-    await asyncio.sleep(0.5)
-    hardware.send_kdaa_event({'type': 'STRIKE', 'hand': 'LEFT', 'note': note, 'vel': 0, 'timestamp': 0})
+    # Send SYNC+STOP for å tømme MCU-bufferen, deretter test-noten
+    hardware.send_sync()
+    await asyncio.sleep(0.3)  # Vent til MCU er klar
+    # Bruk 500ms duration og timestamp=500ms slik at MCU har tid til å prosessere
+    hardware.send_kdaa_event({'type': 'STRIKE', 'hand': 'LEFT', 'note': note, 'vel': 100, 'timestamp': 300, 'duration': 500})
+    # Vent til noten er ferdig + litt ekstra
+    await asyncio.sleep(1.2)
     return {"status": f"Testet note {note}"}
+
+@app.get("/api/solenoid_test")
+async def run_solenoid_test():
+    """Spiller alle 16 solenoider en etter en med 500ms mellomrom.
+    CH0-7 hvite (C2-C3), CH8-15 svarte (C#2, D#2, F#2, G#2, A#2, C#3, D#3, F#3)."""
+    hardware.send_sync()
+    await asyncio.sleep(0.5)
+    # Alle 16 noter i rekkefølge: hvite først, deretter svarte
+    all_notes = [36, 38, 40, 41, 43, 45, 47, 48,   # hvite CH0-7
+                 37, 39, 42, 44, 46, 49, 51, 54]    # svarte CH8-15
+    for i, note in enumerate(all_notes):
+        t_ms = 500 + i * 500
+        hardware.send_kdaa_event({'type': 'STRIKE', 'hand': 'LEFT', 'note': note, 'vel': 90, 'timestamp': t_ms, 'duration': 200})
+    return {"status": "solenoid_test_started", "notes": all_notes}
+
+@app.get("/api/motor_test")
+async def run_motor_test():
+    """Tester lineær aktuator: beveger seg frem og tilbake langs 600mm bane."""
+    hardware.send_sync()
+    await asyncio.sleep(0.5)
+    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 0,   'timestamp': 500})
+    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 150, 'timestamp': 2000})
+    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 300, 'timestamp': 3500})
+    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 450, 'timestamp': 5000})
+    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 580, 'timestamp': 6500})
+    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 0,   'timestamp': 8000})
+    return {"status": "motor_test_started", "positions_mm": [0, 150, 300, 450, 580, 0]}
+
+@app.get("/api/motor_move/{position_mm}")
+async def motor_move(position_mm: int):
+    """Beveg aktuatoren til en spesifikk posisjon (0-590mm)."""
+    pos = max(0, min(590, position_mm))  # Klem innenfor sikre grenser
+    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': pos, 'timestamp': 500})
+    return {"status": "move_sent", "position_mm": pos}
 
 @app.get("/api/toggle_test_mode")
 async def toggle_test_mode():
@@ -213,7 +287,7 @@ async def control_playback(action: str):
 
 @app.get("/")
 async def get_index():
-    with open(os.path.join(current_dir, "index.html"), "r") as f: return HTMLResponse(f.read())
+    with open(os.path.join(current_dir, "index.html"), "r", encoding="utf-8") as f: return HTMLResponse(f.read())
 
 @app.get("/logo.png")
 async def get_logo(): return FileResponse(os.path.join(current_dir, "Klaviator Logo Gold.png"))
@@ -298,6 +372,7 @@ async def play_midi_background(path: str):
                 # Debug logging for første 10 events
                 if idx < 10:
                     print(f"[PLAY] Event {idx}: type={event['type']}, timestamp={event['timestamp']}ms, sent_at={current_time_ms:.1f}ms")
+                # Lyd og piano-roll drives utelukkende av HIT:<note> fra MCU (Alternativ A)
             
         # Vent til sangen er ferdig (litt lenger enn siste event)
         if schedule:

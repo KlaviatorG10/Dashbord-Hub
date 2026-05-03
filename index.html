@@ -599,19 +599,50 @@
             </p>
             
             <div class="piano-keys">
-                <button class="key-btn-white" onclick="sendNote(60)">C4</button>
-                <button class="key-btn-black" onclick="sendNote(61)">C#</button>
-                <button class="key-btn-white" onclick="sendNote(62)">D4</button>
-                <button class="key-btn-black" onclick="sendNote(63)">D#</button>
-                <button class="key-btn-white" onclick="sendNote(64)">E4</button>
-                <button class="key-btn-white" onclick="sendNote(65)">F4</button>
-                <button class="key-btn-black" onclick="sendNote(66)">F#</button>
-                <button class="key-btn-white" onclick="sendNote(67)">G4</button>
-                <button class="key-btn-black" onclick="sendNote(68)">G#</button>
-                <button class="key-btn-white" onclick="sendNote(69)">A4</button>
-                <button class="key-btn-black" onclick="sendNote(70)">A#</button>
-                <button class="key-btn-white" onclick="sendNote(71)">B4</button>
-                <button class="key-btn-white" onclick="sendNote(72)">C5</button>
+                <button class="key-btn-white" onclick="sendNote(36)">C2</button>
+                <button class="key-btn-black" onclick="sendNote(37)">C#2</button>
+                <button class="key-btn-white" onclick="sendNote(38)">D2</button>
+                <button class="key-btn-black" onclick="sendNote(39)">D#2</button>
+                <button class="key-btn-white" onclick="sendNote(40)">E2</button>
+                <button class="key-btn-white" onclick="sendNote(41)">F2</button>
+                <button class="key-btn-black" onclick="sendNote(42)">F#2</button>
+                <button class="key-btn-white" onclick="sendNote(43)">G2</button>
+                <button class="key-btn-black" onclick="sendNote(44)">G#2</button>
+                <button class="key-btn-white" onclick="sendNote(45)">A2</button>
+                <button class="key-btn-black" onclick="sendNote(46)">A#2</button>
+                <button class="key-btn-white" onclick="sendNote(47)">B2</button>
+                <button class="key-btn-white" onclick="sendNote(48)">C3</button>
+                <button class="key-btn-black" onclick="sendNote(49)">C#3</button>
+                <button class="key-btn-black" onclick="sendNote(51)">D#3</button>
+                <button class="key-btn-black" onclick="sendNote(54)">F#3</button>
+            </div>
+
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <button class="key-btn" style="flex: 1; padding: 10px; font-size: 0.9rem; color: var(--gold); border-color: var(--gold);" onclick="runSolenoidTest()">🎹 SOLENOID TEST (16 sol)</button>
+                <button class="key-btn" style="flex: 1; padding: 10px; font-size: 0.9rem; color: var(--cyan); border-color: var(--cyan);" onclick="runMotorTest()">⚙️ MOTOR TEST (0→580mm)</button>
+            </div>
+
+            <!-- Motor manuell posisjonskontroll -->
+            <div class="control-group" style="margin-top: 15px; border: 1px solid var(--cyan); border-radius: 4px; padding: 12px;">
+                <label style="color: var(--cyan); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px;">
+                    ⚙️ Motor Manuell Kontroll
+                </label>
+                <div style="margin-top: 10px;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                        <span style="font-size: 0.8rem; color: var(--text-muted); min-width: 30px;">0mm</span>
+                        <input type="range" id="motor-slider" min="0" max="83" value="0" step="1"
+                               style="flex: 1;"
+                               oninput="updateMotorDisplay(this.value)">
+                        <span style="font-size: 0.8rem; color: var(--text-muted); min-width: 40px;">83mm</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span id="motor-pos-display" style="font-family: 'Share Tech Mono', monospace; color: var(--cyan); font-size: 1.1rem; min-width: 80px;">0mm (0mm)</span>
+                        <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem; color: var(--cyan); border-color: var(--cyan);"
+                                onclick="motorMove()">SEND MOVE</button>
+                        <button class="key-btn" style="padding: 8px 12px; font-size: 0.9rem; color: var(--danger); border-color: var(--danger);"
+                                onclick="motorMoveHome()">HOME (0mm)</button>
+                    </div>
+                </div>
             </div>
             
             <div class="control-group">
@@ -942,6 +973,15 @@
                     return;
                 }
 
+                // KRITISK: Buffer-full varsling vises ALLTID, uavhengig av pause-tilstand
+                if (data.event === "buffer_full") {
+                    const prevPaused = isLoggingPaused;
+                    isLoggingPaused = false;
+                    log('error', `⚠️ MCU BUFFER FULL! Dropper noter. Reduser lookahead eller MIDI-tetthet.`);
+                    isLoggingPaused = prevPaused;
+                    return;
+                }
+
                 if (data.event === "note_on") {
                     handleNoteOn(data.data.note);
                     playNoteSound(data.data.note, data.data.velocity);
@@ -961,6 +1001,49 @@
 
         function sendNote(note) {
             fetch(`/api/test_note/${note}`);
+        }
+
+        function runSolenoidTest() {
+            log('info', '🎹 Starter solenoid-test: 16 solenoider med 500ms mellomrom...');
+            fetch('/api/solenoid_test')
+                .then(res => res.json())
+                .then(data => log('info', `Solenoid-test startet: noter ${data.notes}`))
+                .catch(err => log('error', 'Solenoid-test feilet'));
+        }
+
+        function runMotorTest() {
+            log('info', '⚙️ Starter motor-test: 0 → 150 → 300 → 450 → 580 → 0 mm...');
+            fetch('/api/motor_test')
+                .then(res => res.json())
+                .then(data => log('info', `Motor-test startet: posisjoner ${data.positions_mm} mm`))
+                .catch(err => log('error', 'Motor-test feilet'));
+        }
+
+        const MOTOR_SCALE = 7.45; // Faktisk mm = slider-verdi * 7.45
+
+        function updateMotorDisplay(val) {
+            const actual = (val * MOTOR_SCALE).toFixed(1);
+            document.getElementById('motor-pos-display').innerText = `${val}mm (${actual}mm faktisk)`;
+        }
+
+        function motorMove() {
+            const pos = parseInt(document.getElementById('motor-slider').value);
+            const actual = (pos * MOTOR_SCALE).toFixed(1);
+            log('info', `⚙️ Sender MOVE → ${pos}mm (faktisk ${actual}mm)`);
+            fetch(`/api/motor_move/${pos}`)
+                .then(res => res.json())
+                .then(data => log('info', `Motor beveger seg til ${data.position_mm}mm`))
+                .catch(err => log('error', 'Motor MOVE feilet'));
+        }
+
+        function motorMoveHome() {
+            document.getElementById('motor-slider').value = 0;
+            document.getElementById('motor-pos-display').innerText = '0mm (0.0mm faktisk)';
+            log('info', '⚙️ Sender MOVE → 0mm (HOME)');
+            fetch('/api/motor_move/0')
+                .then(res => res.json())
+                .then(data => log('info', 'Motor returnerer til 0mm'))
+                .catch(err => log('error', 'Motor HOME feilet'));
         }
         
         function uploadMidi() {
@@ -983,7 +1066,10 @@
         let isLoggingPaused = false;
 
         function log(type, message) {
-            if (isLoggingPaused && (type === 'send' || type === 'recv')) return;
+            // Alltid vis feilmeldinger, selv under avspilling
+            if (isLoggingPaused && type === 'error') {
+                // fall through - vis alltid errors
+            } else if (isLoggingPaused && (type === 'send' || type === 'recv')) return;
 
             const time = new Date().toISOString().substring(11, 23);
             const colorClass = type === 'error' ? 'log-error' : (type === 'send' ? 'log-send' : (type === 'recv' ? 'log-recv' : 'log-info'));
