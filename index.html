@@ -536,7 +536,18 @@
             <span>SYS.SYNK:</span>
             <span id="ws-status" class="status-indicator"></span>
             <span id="ws-text" style="color: var(--text-muted);">FRAKOBLET</span>
+            
+            <span style="margin-left: 15px;">nRF54 STATUS:</span>
+            <span id="mcu-status" class="status-indicator"></span>
+            <span id="mcu-text" style="color: var(--text-muted);">IKKE FUNNET</span>
+
+            <span style="margin-left: 15px;">HOMING:</span>
+            <span id="homing-status" class="status-indicator"></span>
+            <span id="homing-text" style="color: var(--text-muted);">⚠️ NOT HOMED</span>
+
+            <button id="test-mode-toggle" class="panic-btn" style="border-color: var(--gold); color: var(--gold); margin-left: 15px;" onclick="toggleTestMode()">🧪 TEST MODE</button>
             <button id="audio-toggle" class="panic-btn" style="border-color: var(--cyan); color: var(--cyan);" onclick="toggleAudio()">🔇 LYDLØS</button>
+            <button class="panic-btn" style="border-color: var(--gold); color: var(--gold);" onclick="triggerHome()">🏠 HOME</button>
             <button class="panic-btn" onclick="triggerEStop()">NØDSTOPP</button>
         </div>
     </header>
@@ -592,20 +603,60 @@
                 Aktiver manuell overstyring. Signaler kringkastes via WebSocket til Unity-klienten og sendes til seriell-port for fysisk aktivering av roboten.
             </p>
             
-            <div class="piano-keys">
-                <button class="key-btn-white" onclick="sendNote(60)">C4</button>
-                <button class="key-btn-black" onclick="sendNote(61)">C#</button>
-                <button class="key-btn-white" onclick="sendNote(62)">D4</button>
-                <button class="key-btn-black" onclick="sendNote(63)">D#</button>
-                <button class="key-btn-white" onclick="sendNote(64)">E4</button>
-                <button class="key-btn-white" onclick="sendNote(65)">F4</button>
-                <button class="key-btn-black" onclick="sendNote(66)">F#</button>
-                <button class="key-btn-white" onclick="sendNote(67)">G4</button>
-                <button class="key-btn-black" onclick="sendNote(68)">G#</button>
-                <button class="key-btn-white" onclick="sendNote(69)">A4</button>
-                <button class="key-btn-black" onclick="sendNote(70)">A#</button>
-                <button class="key-btn-white" onclick="sendNote(71)">B4</button>
-                <button class="key-btn-white" onclick="sendNote(72)">C5</button>
+            <div class="piano-keys" id="full-piano" style="overflow-x: auto; justify-content: flex-start; padding-bottom: 25px;">
+                <!-- Piano genereres av JavaScript for å sikre korrekt mapping av 57 noter -->
+            </div>
+
+            <script>
+                function generatePiano() {
+                    const container = document.getElementById('full-piano');
+                    const notes = [];
+                    // A0 (21) til F5 (77)
+                    for (let n = 21; n <= 77; n++) {
+                        const isBlack = [1, 3, 6, 8, 10].includes(n % 12);
+                        const btn = document.createElement('button');
+                        btn.className = isBlack ? 'key-btn-black' : 'key-btn-white';
+                        
+                        // Note navn for labels
+                        const names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+                        const oct = Math.floor(n / 12) - 1;
+                        const name = names[n % 12];
+                        btn.innerHTML = `<span>${name}${oct}</span>`;
+                        
+                        btn.onclick = () => sendNote(n);
+                        btn.setAttribute('data-note', n);
+                        container.appendChild(btn);
+                    }
+                }
+                window.addEventListener('DOMContentLoaded', generatePiano);
+            </script>
+
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <button class="key-btn" style="flex: 1; padding: 10px; font-size: 0.9rem; color: var(--gold); border-color: var(--gold);" onclick="runSolenoidTest()">🎹 SOLENOID TEST (16 sol)</button>
+                <button class="key-btn" style="flex: 1; padding: 10px; font-size: 0.9rem; color: var(--cyan); border-color: var(--cyan);" onclick="runMotorTest()">⚙️ MOTOR TEST (0→580mm)</button>
+            </div>
+
+            <!-- Motor manuell posisjonskontroll -->
+            <div class="control-group" style="margin-top: 15px; border: 1px solid var(--cyan); border-radius: 4px; padding: 12px;">
+                <label style="color: var(--cyan); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px;">
+                    ⚙️ Motor Manuell Kontroll
+                </label>
+                <div style="margin-top: 10px;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                        <span style="font-size: 0.8rem; color: var(--text-muted); min-width: 30px;">0mm</span>
+                        <input type="range" id="motor-slider" min="0" max="83" value="0" step="1"
+                               style="flex: 1;"
+                               oninput="updateMotorDisplay(this.value)">
+                        <span style="font-size: 0.8rem; color: var(--text-muted); min-width: 40px;">83mm</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span id="motor-pos-display" style="font-family: 'Share Tech Mono', monospace; color: var(--cyan); font-size: 1.1rem; min-width: 80px;">0mm (0mm)</span>
+                        <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem; color: var(--cyan); border-color: var(--cyan);"
+                                onclick="motorMove()">SEND MOVE</button>
+                        <button class="key-btn" style="padding: 8px 12px; font-size: 0.9rem; color: var(--danger); border-color: var(--danger);"
+                                onclick="motorMoveHome()">HOME (0mm)</button>
+                    </div>
+                </div>
             </div>
             
             <div class="control-group">
@@ -644,6 +695,7 @@
                     <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem;" onclick="controlPlayback('resume')">▶️ SPILL</button>
                     <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem;" onclick="controlPlayback('pause')">⏸️ PAUSE</button>
                     <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem; color: var(--danger); border-color: var(--danger);" onclick="controlPlayback('stop')">⏹️ STOPP</button>
+                    <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem; color: var(--gold); border-color: var(--gold);" onclick="fetch('/api/test_sequence')">🎹 A-DUR TEST</button>
                 </div>
             </div>
         </div>
@@ -683,10 +735,10 @@
         const cpuLatencyText = document.getElementById('cpu-latency');
         const midiLibList = document.getElementById('midi-library-list');
         
-        // --- MODAL LOGIKK ---
         const modalOverlay = document.getElementById('log-modal');
         const modalLogWindow = document.getElementById('modal-log-window');
 
+        // --- MODAL LOGIKK ---
         function openModal() {
             modalOverlay.style.display = 'flex';
             modalLogWindow.scrollTop = modalLogWindow.scrollHeight;
@@ -701,32 +753,6 @@
         
         function handleEscape(e) {
             if (e.key === 'Escape') closeModal();
-        }
-        // --------------------
-        
-        function downloadLatencyData() {
-            if (latencyData.length === 0) {
-                alert("Ingen data å laste ned. Spill noen noter først!");
-                return;
-            }
-
-            // Bygg CSV innhold - UTFØRLIG VERSJON FOR FORSKNING
-            let csvContent = "data:text/csv;charset=utf-8,";
-            csvContent += "Timestamp,Event,MIDI_Note,Velocity,Latency_ms,Lookahead_Setting_ms,Status\n";
-            
-            latencyData.forEach(function(row) {
-                csvContent += `${row.timestamp},${row.event},${row.note},${row.velocity || 0},${row.latency_ms},${row.current_lookahead},SUCCESS\n`;
-            });
-
-            const encodedUri = encodeURI(csvContent);
-            const link = document.createElement("a");
-            link.setAttribute("href", encodedUri);
-            link.setAttribute("download", `klaviator_research_data_${new Date().getTime()}.csv`);
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            
-            log('info', `Lastet ned forskningsrapport (${latencyData.length} rader).`);
         }
 
         // --- BIBLIOTEK LOGIKK ---
@@ -764,23 +790,19 @@
                     document.getElementById('midi-status').style.color = "var(--gold-bright)";
                 });
         }
-        // --------------------
 
-        // --- DATAINNSAMLING (For Bachelor Rapport) ---
-        let latencyData = []; // Array for å lagre alle målinger
+        // --- LATENCY MÅLING & DATAINNSAMLING ---
+        let latencyData = []; 
+        const pendingNotes = new Map(); 
 
         function recordLatency(latency, note, type) {
-            // Vi tar bare vare på de siste 10 000 punktene så ikke nettleseren krasjer
-            if (latencyData.length > 10000) {
-                latencyData.shift(); 
-            }
-            
+            if (latencyData.length > 10000) latencyData.shift(); 
             latencyData.push({
                 timestamp: new Date().toISOString(),
                 event: type,
                 note: note,
                 latency_ms: latency,
-                current_lookahead: numberInput.value // Lagrer også hva offset-slideren stod på
+                current_lookahead: document.getElementById('offset-input').value
             });
         }
 
@@ -789,16 +811,10 @@
                 alert("Ingen data å laste ned. Spill noen noter først!");
                 return;
             }
-
-            // Bygg CSV innhold
-            let csvContent = "data:text/csv;charset=utf-8,";
-            csvContent += "Tidspunkt,Hendelse,Note,Latency(ms),Lookahead_Innstilling(ms)\n"; // Header
-            
-            latencyData.forEach(function(row) {
+            let csvContent = "data:text/csv;charset=utf-8,Tidspunkt,Hendelse,Note,Latency(ms),Lookahead_Innstilling(ms)\n";
+            latencyData.forEach(row => {
                 csvContent += `${row.timestamp},${row.event},${row.note},${row.latency_ms},${row.current_lookahead}\n`;
             });
-
-            // Lag nedlastingslenke
             const encodedUri = encodeURI(csvContent);
             const link = document.createElement("a");
             link.setAttribute("href", encodedUri);
@@ -806,30 +822,23 @@
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
-            
             log('info', `Lastet ned CSV-rapport med ${latencyData.length} datapunkter.`);
         }
-        // --------------------
 
-        // --- LYD SYNTHESIZER (SOUNDFONT SAMPLES) ---
+        // --- LYD SYNTHESIZER ---
         let audioCtx;
         let isAudioEnabled = false;
         let pianoPlayer;
-        const activeNotes = {}; // Ordbok for å holde styr på lyder som spilles
+        const activeNotes = {};
 
         async function toggleAudio() {
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             isAudioEnabled = !isAudioEnabled;
             const btn = document.getElementById('audio-toggle');
-            
             if (isAudioEnabled) {
                 audioCtx.resume();
                 btn.innerText = "⌛ LASTER LYD...";
                 btn.disabled = true;
-                
                 try {
                     pianoPlayer = await Soundfont.instrument(audioCtx, 'acoustic_grand_piano');
                     btn.innerText = "🔊 LYD PÅ";
@@ -839,9 +848,7 @@
                 } catch (e) {
                     log('error', 'Kunne ikke laste piano-samples.');
                     btn.innerText = "🔇 FEIL";
-                } finally {
-                    btn.disabled = false;
-                }
+                } finally { btn.disabled = false; }
             } else {
                 btn.innerText = "🔇 LYDLØS";
                 btn.style.borderColor = "var(--cyan)";
@@ -853,71 +860,40 @@
 
         function playNoteSound(note, velocity) {
             if (!isAudioEnabled || !pianoPlayer) return;
-            
-            // Hvis noten allerede spilles, stopp den gamle instansen først
-            if (activeNotes[note]) {
-                activeNotes[note].stop();
-            }
-            
-            // Start ny lyd og lagre referansen
-            activeNotes[note] = pianoPlayer.play(note, audioCtx.currentTime, { 
-                gain: velocity / 127,
-                decay: 2 // Gir en naturlig etterklang
-            });
+            if (activeNotes[note]) activeNotes[note].stop();
+            activeNotes[note] = pianoPlayer.play(note, audioCtx.currentTime, { gain: velocity / 127, decay: 2 });
         }
 
         function stopNoteSound(note) {
             if (!pianoPlayer || !activeNotes[note]) return;
-            
-            // Stopp nøyaktig denne noten med en myk fade-out
             activeNotes[note].stop(audioCtx.currentTime + 0.1);
             delete activeNotes[note];
         }
-        // ----------------------------------------
 
-        // UI Sync for Offset Slider
-        const slider = document.getElementById('offset-slider');
-        const numberInput = document.getElementById('offset-input');
-
-        let syncTimeout;
+        // --- UI SYNC ---
         function syncOffset(val) {
             let num = parseInt(val);
             if(isNaN(num)) return;
-            if(num < 0) num = 0;
-            if(num > 2000) num = 2000; 
-            
-            slider.value = num;
-            numberInput.value = num;
-            
-            // DEBOUNCE: Vent 50ms før vi sender til serveren
-            clearTimeout(syncTimeout);
-            syncTimeout = setTimeout(() => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ action: "set_offset", value: num }));
-                    log('info', `Look-ahead satt til ${num}ms`);
-                }
-            }, 50);
+            document.getElementById('offset-slider').value = num;
+            document.getElementById('offset-input').value = num;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: "set_offset", value: num }));
+            }
         }
 
         function adjustOffset(change) {
-            let current = parseInt(numberInput.value);
+            let current = parseInt(document.getElementById('offset-input').value);
             syncOffset(current + change);
         }
 
-        // --- VISUAL TELEMETRY (CANVAS) ---
+        // --- VISUAL TELEMETRY ---
         const canvas = document.getElementById('piano-roll-canvas');
         const ctx = canvas.getContext('2d');
         let blocks = [];
         let activeBlocks = {};
 
         function handleNoteOn(note) {
-            // Map C3 (48) to C7 (96) over the 150px height. Range = 48 notes.
-            // 150 / 48 = ~3.125 px per note.
-            // Note 96 -> y = 0. Note 48 -> y = 150.
             let yPos = 150 - ((note - 48) * 3.125); 
-            if (yPos < 0) yPos = 0;
-            if (yPos > 146) yPos = 146;
-
             const block = { x: canvas.width, y: yPos, w: 4, active: true, note: note };
             blocks.push(block);
             activeBlocks[note] = block;
@@ -931,54 +907,26 @@
         }
 
         function renderTelemetry() {
-            // Tøm canvas helt for å unngå "blødning" (trails)
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            // Tegn rutenett (horisontale linjer for oktaver)
             ctx.strokeStyle = 'rgba(212, 175, 55, 0.15)';
-            ctx.lineWidth = 1;
             [37.5, 75, 112.5].forEach(y => {
-                ctx.beginPath();
-                ctx.moveTo(0, y);
-                ctx.lineTo(canvas.width, y);
-                ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
             });
-
-            // Oppdater og tegn noter
             for (let i = blocks.length - 1; i >= 0; i--) {
                 let b = blocks[i];
-                
-                // Flytt mot venstre
                 b.x -= 4; 
-                
-                // Hvis tangenten fortsatt holdes nede, strekk blokken bakover
-                if (b.active) {
-                    b.w += 4; 
-                }
-                
-                // Fargelegging: Svarte tangenter er cyan, hvite er gull
+                if (b.active) b.w += 4; 
                 const isBlackKey = [1, 3, 6, 8, 10].includes(b.note % 12);
                 ctx.fillStyle = isBlackKey ? 'rgba(0, 229, 255, 0.9)' : 'rgba(212, 175, 55, 0.9)';
-                ctx.shadowColor = isBlackKey ? 'rgba(0, 229, 255, 0.6)' : 'rgba(212, 175, 55, 0.6)';
-                ctx.shadowBlur = 8;
-                
-                // Tegn rektangelet
                 ctx.fillRect(b.x, b.y, b.w, 3);
-                ctx.shadowBlur = 0;
-
-                // Slett blokken hvis den har forlatt skjermen
-                if (b.x + b.w < -10) {
-                    blocks.splice(i, 1);
-                }
+                if (b.x + b.w < -10) blocks.splice(i, 1);
             }
             requestAnimationFrame(renderTelemetry);
         }
-        renderTelemetry(); 
-        // ----------------------------------------
+        renderTelemetry();
 
-
+        // --- WEBSOCKET KOMMUNIKASJON ---
         function connectWebSocket() {
-            // Bruker automatisk samme IP som nettsiden ble lastet fra
             const serverIP = window.location.hostname;
             ws = new WebSocket(`ws://${serverIP}:8000/ws/unity`);
 
@@ -986,150 +934,229 @@
                 statusIndicator.classList.add('connected');
                 statusText.innerText = "TILKOBLET";
                 statusText.style.color = "var(--success)";
-                log('info', 'WebSocket-bro etablert med Hjernen.');
-                refreshLibrary(); // Last biblioteket når vi kobler til
+                log('info', 'WebSocket-bro etablert.');
+                refreshLibrary();
+                updateTestModeButton();
             };
 
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
                 
+                // HVORFOR: Håndterer maskinvare-status (Connected/Disconnected)
+                if (data.event === "hw_status") {
+                    const statusInd = document.getElementById('mcu-status');
+                    const statusTxt = document.getElementById('mcu-text');
+                    if (data.data.status === "connected") {
+                        statusInd.classList.add('connected');
+                        statusTxt.innerText = "TILKOBLET";
+                        statusTxt.style.color = "var(--success)";
+                    } else {
+                        statusInd.classList.remove('connected');
+                        statusTxt.innerText = "FRAKOBLET";
+                        statusTxt.style.color = "var(--danger)";
+                    }
+                    return;
+                }
+
+                if (data.event === "serial_log") {
+                    const isSend = data.data.type === "send";
+                    const msg = data.data.message.trim();
+                    if (isSend) {
+                        pendingNotes.set(msg, performance.now());
+                    } else if (pendingNotes.has(msg)) {
+                        const rtt = (performance.now() - pendingNotes.get(msg)).toFixed(2);
+                        cpuLatencyText.innerText = rtt + "ms";
+                        cpuLatencyText.style.color = rtt < 10 ? "var(--success)" : (rtt < 30 ? "var(--gold)" : "var(--danger)");
+                        recordLatency(rtt, msg, "hardware_rtt");
+                        pendingNotes.delete(msg);
+                    }
+                    // Logg alltid TX/RX for å kunne feilsøke kommunikasjonen med brikken
+                    log(isSend ? "send" : "recv", `${isSend ? "TX >>" : "RX <<"} ${msg}`);
+                    return;
+                }
+
                 if (data.event === "playback_start") {
-                    latencyData = []; // TØM GAMLE DATA
-                    currentSongName = data.data.file;
-                    songStartTime = Date.now();
-                    log('info', `START: ${data.data.file} (${data.data.total_notes} noter)`);
+                    latencyData = [];
+                    isLoggingPaused = true; // PAUSE LOGGING
+                    log('info', `START: ${data.data.file} (Logg deaktivert for fart)`);
                     return;
                 }
 
                 if (data.event === "playback_finish") {
+                    isLoggingPaused = false; // REAKTIVER LOGGING
                     log('info', `FERDIG: Avspilling fullført.`);
                     return;
                 }
 
-                if (data.event === "bpm_change") {
-                    document.getElementById('bpm-value').innerText = data.data.bpm;
-                    log('info', `Tempo: ${data.data.bpm} BPM`);
-                    return;
-                }
-                
-                if (data.event === "system_halt") {
-                    log('error', 'AVBRUDD: Systemet ble stoppet.');
-                    if (pianoPlayer) pianoPlayer.stop();
+                // KRITISK: Buffer-full varsling vises ALLTID, uavhengig av pause-tilstand
+                if (data.event === "buffer_full") {
+                    const prevPaused = isLoggingPaused;
+                    isLoggingPaused = false;
+                    log('error', `⚠️ MCU BUFFER FULL! Dropper noter. Reduser lookahead eller MIDI-tetthet.`);
+                    isLoggingPaused = prevPaused;
                     return;
                 }
 
-                const latency = Date.now() - data.data.timestamp;
-                recordLatency(latency, data.data.note, data.event);
-                
-                // PERFORMANCE HACK: Oppdater tekst-felt kun når nettleseren har tid
-                requestAnimationFrame(() => {
-                    cpuLatencyText.innerText = latency + "ms";
-                    if(latency > 25) { cpuLatencyText.style.color = "var(--danger)"; } 
-                    else { cpuLatencyText.style.color = "var(--cyan)"; }
-                });
+                if (data.event === "homed") {
+                    const hInd = document.getElementById('homing-status');
+                    const hTxt = document.getElementById('homing-text');
+                    if (data.data.status) {
+                        hInd.classList.add('connected');
+                        hTxt.innerText = "🏠 HOMED";
+                        hTxt.style.color = "var(--success)";
+                        log('info', 'System kalibrert: Homing fullført.');
+                    } else {
+                        hInd.classList.remove('connected');
+                        hTxt.innerText = "⚠️ NOT HOMED";
+                        hTxt.style.color = "var(--danger)";
+                    }
+                    return;
+                }
 
-                if(data.event === "note_on") {
+                if (data.event === "note_on") {
                     handleNoteOn(data.data.note);
                     playNoteSound(data.data.note, data.data.velocity);
-                    const btn = document.querySelector(`button[onclick="sendNote(${data.data.note})"]`);
-                    if(btn) btn.classList.add('active');
-                } else if(data.event === "note_off") {
+                } else if (data.event === "note_off") {
                     handleNoteOff(data.data.note);
                     stopNoteSound(data.data.note);
-                    const btn = document.querySelector(`button[onclick="sendNote(${data.data.note})"]`);
-                    if(btn) btn.classList.remove('active');
                 }
             };
 
             ws.onclose = () => {
                 statusIndicator.classList.remove('connected');
-                statusText.innerText = "PRØVER PÅ NYTT...";
+                statusText.innerText = "FRAKOBLET";
                 statusText.style.color = "var(--danger)";
-                log('error', 'Forbindelse brutt. Forsøker å gjenopprette om 2s...');
-                setTimeout(connectWebSocket, 2000); // AUTO-RECONNECT
+                setTimeout(connectWebSocket, 2000);
             };
         }
 
         function sendNote(note) {
-            fetch(`/api/test_note/${note}`)
-                .then(response => response.json())
-                .then(data => log('send', `SENDER: Manuell puls for Note ${note}`))
-                .catch(error => log('error', `FEIL: Node ${note} svarer ikke.`));
+            fetch(`/api/test_note/${note}`);
+        }
+
+        function runSolenoidTest() {
+            log('info', '🎹 Starter solenoid-test: 16 solenoider med 500ms mellomrom...');
+            fetch('/api/solenoid_test')
+                .then(res => res.json())
+                .then(data => log('info', `Solenoid-test startet: noter ${data.notes}`))
+                .catch(err => log('error', 'Solenoid-test feilet'));
+        }
+
+        function runMotorTest() {
+            log('info', '⚙️ Starter motor-test: 0 → 150 → 300 → 450 → 580 → 0 mm...');
+            fetch('/api/motor_test')
+                .then(res => res.json())
+                .then(data => log('info', `Motor-test startet: posisjoner ${data.positions_mm} mm`))
+                .catch(err => log('error', 'Motor-test feilet'));
+        }
+
+        const MOTOR_SCALE = 7.4625; // Faktisk mm = slider-verdi * 7.4625
+
+        function updateMotorDisplay(val) {
+            const actual = (val * MOTOR_SCALE).toFixed(1);
+            document.getElementById('motor-pos-display').innerText = `${val}mm (${actual}mm faktisk)`;
+        }
+
+        function motorMove() {
+            const pos = parseInt(document.getElementById('motor-slider').value);
+            const actual = (pos * MOTOR_SCALE).toFixed(1);
+            log('info', `⚙️ Sender MOVE → ${pos}mm (faktisk ${actual}mm)`);
+            fetch(`/api/motor_move/${pos}`)
+                .then(res => res.json())
+                .then(data => log('info', `Motor beveger seg til ${data.position_mm}mm`))
+                .catch(err => log('error', 'Motor MOVE feilet'));
+        }
+
+        function motorMoveHome() {
+            document.getElementById('motor-slider').value = 0;
+            document.getElementById('motor-pos-display').innerText = '0mm (0.0mm faktisk)';
+            log('info', '⚙️ Sender MOVE → 0mm (HOME)');
+            fetch('/api/motor_move/0')
+                .then(res => res.json())
+                .then(data => log('info', 'Motor returnerer til 0mm'))
+                .catch(err => log('error', 'Motor HOME feilet'));
         }
         
         function uploadMidi() {
             const input = document.getElementById('midi-upload');
             if(input.files.length === 0) return;
-            
-            const file = input.files[0];
-            document.getElementById('midi-status').innerText = file.name;
-            document.getElementById('midi-status').style.color = "var(--gold-bright)";
-            
             const formData = new FormData();
-            formData.append('file', file);
-            
-            log('info', `Laster opp sekvens: ${file.name}...`);
-            
-            fetch('/api/upload_midi', {
-                method: 'POST',
-                body: formData
-            })
-            .then(res => res.json())
-            .then(data => {
-                log('info', `Opplasting vellykket. Autonom sekvens startet!`);
-            })
-            .catch(err => log('error', 'Feil ved opplasting av MIDI.'));
+            formData.append('file', input.files[0]);
+            log('info', `Laster opp: ${input.files[0].name}...`);
+            fetch('/api/upload_midi', { method: 'POST', body: formData });
         }
 
         function controlPlayback(action) {
-            fetch(`/api/playback/${action}`)
-                .then(res => res.json())
-                .then(data => {
-                    log('info', `Avspilling: ${action.toUpperCase()}`);
-                    if (action === 'stop' || action === 'pause') {
-                        // Stopp all lyd umiddelbart ved pause/stopp
-                        if (pianoPlayer) pianoPlayer.stop();
-                    }
-                })
-                .catch(err => log('error', 'Kunne ikke kommunisere med Hjernen.'));
+            fetch(`/api/playback/${action}`);
         }
 
         function triggerEStop() {
-            log('error', '!!! SYSTEM HALTED - E-STOP AKTIVERT !!!');
             fetch('/api/estop');
         }
 
-        function log(type, message) {
-            const time = new Date().toISOString().substring(11, 23);
-            
-            let colorClass = 'log-info';
-            if (type === 'error') colorClass = 'log-error';
-            if (type === 'send') colorClass = 'log-send';
-            if (type === 'recv') colorClass = 'log-recv';
+        function triggerHome() {
+            fetch('/api/home');
+        }
 
-            const logHtml = `<span class="log-time">[${time}]</span> <span class="${colorClass}">${message}</span>`;
+        let isLoggingPaused = false;
+
+        function log(type, message) {
+            // Alltid vis feilmeldinger, selv under avspilling
+            if (isLoggingPaused && type === 'error') {
+                // fall through - vis alltid errors
+            } else if (isLoggingPaused && (type === 'send' || type === 'recv')) return;
+
+            const time = new Date().toISOString().substring(11, 23);
+            const colorClass = type === 'error' ? 'log-error' : (type === 'send' ? 'log-send' : (type === 'recv' ? 'log-recv' : 'log-info'));
             
-            const divMain = document.createElement('div');
-            divMain.innerHTML = logHtml;
-            logWindow.appendChild(divMain);
+            const div = document.createElement('div');
+            div.innerHTML = `<span class="log-time">[${time}]</span> <span class="${colorClass}">${message}</span>`;
             
-            // PERFORMANCE HACK: Begrens antall linjer i loggen for å spare CPU
-            if (logWindow.children.length > 50) {
+            logWindow.appendChild(div);
+            while (logWindow.children.length > 30) {
                 logWindow.removeChild(logWindow.firstChild);
             }
             logWindow.scrollTop = logWindow.scrollHeight;
 
-            const divModal = document.createElement('div');
-            divModal.innerHTML = logHtml;
-            modalLogWindow.appendChild(divModal);
-            
-            if (modalLogWindow.children.length > 200) {
+            const modalDiv = div.cloneNode(true);
+            modalLogWindow.appendChild(modalDiv);
+            while (modalLogWindow.children.length > 100) {
                 modalLogWindow.removeChild(modalLogWindow.firstChild);
             }
             modalLogWindow.scrollTop = modalLogWindow.scrollHeight;
         }
 
-        // Init
+        // --- TEST MODE TOGGLE ---
+        async function toggleTestMode() {
+            try {
+                const response = await fetch('/api/toggle_test_mode');
+                const data = await response.json();
+                updateTestModeButton();
+                log('info', `Modus byttet til: ${data.mode}`);
+            } catch (err) {
+                log('error', 'Kunne ikke bytte modus');
+            }
+        }
+
+        async function updateTestModeButton() {
+            try {
+                const response = await fetch('/api/get_mode');
+                const data = await response.json();
+                const btn = document.getElementById('test-mode-toggle');
+                if (data.test_mode) {
+                    btn.innerText = "🧪 TEST MODE";
+                    btn.style.borderColor = "var(--gold)";
+                    btn.style.color = "var(--gold)";
+                } else {
+                    btn.innerText = "🤖 PRODUCTION";
+                    btn.style.borderColor = "var(--success)";
+                    btn.style.color = "var(--success)";
+                }
+            } catch (err) {
+                console.log('Kunne ikke hente modus');
+            }
+        }
+
         connectWebSocket();
     </script>
 </body>
