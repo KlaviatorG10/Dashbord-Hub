@@ -1,4 +1,4 @@
-# Byte-compiled / optimized / DLL files
+﻿# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
@@ -140,6 +140,7 @@ celerybeat.pid
 .venv
 env/
 venv/
+venv_windows/
 ENV/
 env.bak/
 venv.bak/
@@ -175,12 +176,6 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Abstra
-# Abstra is an AI-powered process automation framework.
-# Ignore directories containing user credentials, local state, and settings.
-# Learn more at https://abstra.io/docs
-.abstra/
-
 # Visual Studio Code
 #  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
 #  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
@@ -194,14 +189,17 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-# Cursor
-#  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
-#  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
-#  refer to https://docs.cursor.com/context/ignore-files
-.cursorignore
-.cursorindexingignore
-
 # Marimo
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Local notes
+FOUR_STATE_DASHBOARD_CHANGES.md
+FOUR_STATE_FIRMWARE_CHANGES.md
+UNITY_KOBLING_GUIDE.md
+utviklingsplan_dashboard.md
+temp_script.txt
+
+# OS files
+.DS_Store

@@ -200,7 +200,7 @@ class HardwareController:
 hardware = HardwareController()
 current_playback_task = None
 is_paused = False
-current_window_start = 21
+current_window_start = 48  # C3 — ny hjemposisjon
 
 @app.on_event("startup")
 async def startup(): hardware._try_connect_serial()
@@ -240,10 +240,13 @@ async def trigger_test_note(note: int):
 
     # Sjekk om noten dekkes av nåværende hvit/sort vindu
     if not hardware.scheduler._notes_fit_in_window([note], current_window_start):
-        current_window_start = hardware.scheduler._window_start_for_note(note)
+        next_window_start = hardware.scheduler._window_start_for_note(note)
+        if next_window_start is None:
+            return {"status": "error", "reason": "note_not_available_in_current_4_state_test", "note": note}
+        current_window_start = next_window_start
         pos_mm = hardware.scheduler._note_to_mm(current_window_start)
         hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': pos_mm, 'timestamp': 100})
-        print(f"[API] MOVE → {pos_mm:.2f}mm (vindu starter på note {current_window_start})")
+        print(f"[API] MOVE -> {pos_mm:.2f}mm (vindu starter på note {current_window_start})")
     else:
         print(f"[API] Note {note} er i nåværende vindu (start={current_window_start}). Skipper MOVE.")
 
@@ -258,37 +261,62 @@ async def trigger_test_note(note: int):
     })
 
     return {"status": f"Testet note {note} i vindu f.o.m {current_window_start}"}
-@app.get("/api/solenoid_test")
+@app.get("/api/solenoid_test_old")
 async def run_solenoid_test():
     """Spiller alle 16 solenoider en etter en med 500ms mellomrom.
-    CH0-7 hvite (C2-C3), CH8-15 svarte (C#2, D#2, F#2, G#2, A#2, C#3, D#3, F#3)."""
+    CH0-7 hvite (C3-C4), CH8-15 svarte (C#3, D#3, F#3, G#3, A#3, C#4, D#4, F#4)."""
     hardware.send_sync()
     await asyncio.sleep(0.5)
-    # Alle 16 noter i rekkefølge: hvite først, deretter svarte
-    all_notes = [36, 38, 40, 41, 43, 45, 47, 48,   # hvite CH0-7
-                 37, 39, 42, 44, 46, 49, 51, 54]    # svarte CH8-15
+    # Alle 16 noter i rekkefølge: hvite først, deretter svarte — basert på C3 hjemposisjon
+    all_notes = [48, 50, 52, 53, 55, 57, 59, 60,   # hvite CH0-7: C3-C4
+                 49, 51, 54, 56, 58, 61, 63, 66]    # svarte CH8-15: C#3-F#4
     for i, note in enumerate(all_notes):
         t_ms = 500 + i * 500
         hardware.send_kdaa_event({'type': 'STRIKE', 'hand': 'LEFT', 'note': note, 'vel': 127, 'timestamp': t_ms, 'duration': 700})
     return {"status": "solenoid_test_started", "notes": all_notes}
+
+@app.get("/api/solenoid_test")
+async def run_four_state_solenoid_test():
+    """Tester ny 4-state modell: CH0-7 hvite tangenter i hver tilstand."""
+    hardware.send_sync()
+    await asyncio.sleep(0.5)
+
+    states = [
+        {"state": 1, "pos": 0,  "notes": [48, 50, 52, 53, 55, 57, 59, 60]},     # C3-C4
+        {"state": 2, "pos": 19, "notes": [62, 64, 65, 67, 69, 71, 72, 74]},     # D4-D5
+        {"state": 3, "pos": 37, "notes": [76, 77, 79, 81, 83, 84, 86, 88]},     # E5-E6
+        {"state": 4, "pos": 56, "notes": [89, 91, 93, 95, 96, 98, 100, 101]},   # F6-F7
+    ]
+
+    t_ms = 500
+    planned = []
+    for state in states:
+        hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': state["pos"], 'timestamp': t_ms})
+        t_ms += 800
+        for note in state["notes"]:
+            hardware.send_kdaa_event({'type': 'STRIKE', 'hand': 'LEFT', 'note': note, 'vel': 127, 'timestamp': t_ms, 'duration': 500})
+            planned.append({"state": state["state"], "pos": state["pos"], "note": note})
+            t_ms += 500
+        t_ms += 500
+
+    return {"status": "four_state_solenoid_test_started", "planned": planned}
 
 @app.get("/api/motor_test")
 async def run_motor_test():
     """Tester lineær aktuator: beveger seg frem og tilbake langs 600mm bane."""
     hardware.send_sync()
     await asyncio.sleep(0.5)
-    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 0,   'timestamp': 500})
-    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 150, 'timestamp': 2000})
-    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 300, 'timestamp': 3500})
-    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 450, 'timestamp': 5000})
-    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 580, 'timestamp': 6500})
-    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 0,   'timestamp': 8000})
-    return {"status": "motor_test_started", "positions_mm": [0, 150, 300, 450, 580, 0]}
+    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos':  0, 'timestamp':  500})
+    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 19, 'timestamp': 2000})
+    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 37, 'timestamp': 3500})
+    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': 56, 'timestamp': 5000})
+    hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos':  0, 'timestamp': 6500})
+    return {"status": "motor_test_started", "positions_mm": [0, 19, 37, 56, 0]}
 
 @app.get("/api/motor_move/{position_mm}")
 async def motor_move(position_mm: int):
-    """Beveg aktuatoren til en spesifikk posisjon (0-590mm)."""
-    pos = max(0, min(590, position_mm))  # Klem innenfor sikre grenser
+    """Beveg aktuatoren til en spesifikk posisjon (0-60 input)."""
+    pos = max(0, min(60, position_mm))  # Klem innenfor sikre grenser
     hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': pos, 'timestamp': 500})
     return {"status": "move_sent", "position_mm": pos}
 
@@ -332,26 +360,88 @@ async def test_sequence():
     current_playback_task = asyncio.create_task(play_test_sequence())
     return {"status": "playing"}
 
+@app.get("/api/four_state_showcase")
+async def four_state_showcase():
+    global current_playback_task, is_paused
+    is_paused = False
+    if current_playback_task: current_playback_task.cancel()
+    current_playback_task = asyncio.create_task(play_four_state_showcase())
+    return {"status": "playing"}
+
+async def play_four_state_showcase():
+    """Flytt-spill-flytt showcase for de fire kalibrerte state-vinduene."""
+    states = [
+        {"name": "State 1 C3-C4", "pos": 0,  "notes": [48, 52, 55, 60, 55, 52, 48]},
+        {"name": "State 2 D4-D5", "pos": 19, "notes": [62, 65, 69, 74, 69, 65, 62]},
+        {"name": "State 3 E5-E6", "pos": 37, "notes": [76, 79, 83, 88, 83, 79, 76]},
+        {"name": "State 4 F6-F7", "pos": 56, "notes": [89, 93, 96, 101, 96, 93, 89]},
+    ]
+
+    sequence = []
+    t = 800
+    for state in states:
+        sequence.append({
+            'type': 'MOVE',
+            'hand': 'LEFT',
+            'pos': state["pos"],
+            'timestamp': t
+        })
+        t += 900
+
+        for note in state["notes"]:
+            sequence.append({
+                'type': 'STRIKE',
+                'hand': 'LEFT',
+                'note': note,
+                'vel': 95,
+                'duration': 320,
+                'timestamp': t
+            })
+            t += 260
+
+        t += 450
+
+    sequence.append({'type': 'MOVE', 'hand': 'LEFT', 'pos': 0, 'timestamp': t + 300})
+
+    await broadcast_event("playback_start", {"file": "Four-state showcase", "total_notes": len(sequence)})
+    hardware.send_sync()
+    await asyncio.sleep(0.6)
+    start_t = time.perf_counter()
+
+    for event in sequence:
+        current_time_ms = (time.perf_counter() - start_t) * 1000
+        time_until = event['timestamp'] - current_time_ms
+        if time_until > 0:
+            await asyncio.sleep(time_until / 1000)
+        hardware.send_kdaa_event(event)
+
+    await asyncio.sleep(2.0)
+    await broadcast_event("playback_finish", {})
+
 async def play_test_sequence():
     notes = [
-        {'note': 21, 'vel': 80, 'duration': 400},   # A0
-        {'note': 28, 'vel': 80, 'duration': 400},   # E1
-        {'note': 33, 'vel': 80, 'duration': 400},   # A1
-        {'note': 37, 'vel': 80, 'duration': 400},   # C#2
-        {'note': 40, 'vel': 80, 'duration': 400},   # E2
-        {'note': 45, 'vel': 80, 'duration': 400},   # A2
-        {'note': 49, 'vel': 80, 'duration': 400},   # C#3
+        {'note': 48, 'vel': 80, 'duration': 400},   # C3
         {'note': 52, 'vel': 80, 'duration': 400},   # E3
-        {'note': 57, 'vel': 80, 'duration': 400},   # A3
+        {'note': 55, 'vel': 80, 'duration': 400},   # G3
+        {'note': 60, 'vel': 80, 'duration': 400},   # C4
         {'note': 64, 'vel': 80, 'duration': 400},   # E4
-        {'note': 69, 'vel': 80, 'duration': 400},   # A4
-        {'note': 77, 'vel': 80, 'duration': 400},   # F5
+        {'note': 67, 'vel': 80, 'duration': 400},   # G4
+        {'note': 72, 'vel': 80, 'duration': 400},   # C5
+        {'note': 76, 'vel': 80, 'duration': 400},   # E5
+        {'note': 79, 'vel': 80, 'duration': 400},   # G5
+        {'note': 84, 'vel': 80, 'duration': 400},   # C6
+        {'note': 88, 'vel': 80, 'duration': 400},   # E6
+        {'note': 91, 'vel': 80, 'duration': 400},   # G6
     ]
     
     sequence = []
     t = 1000
     for n in notes:
-        pos_mm = (n['note'] - 21) * 1.854
+        window_start = hardware.scheduler._window_start_for_note(n['note'])
+        if window_start is None:
+            print(f"[TEST_SEQUENCE] note {n['note']} not available")
+            continue
+        pos_mm = hardware.scheduler._note_to_mm(window_start)
         sequence.append({
             'type': 'MOVE',
             'hand': 'LEFT',

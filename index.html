@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="no">
 <head>
     <meta charset="UTF-8">
@@ -545,9 +545,9 @@
             <span id="homing-status" class="status-indicator"></span>
             <span id="homing-text" style="color: var(--text-muted);">⚠️ NOT HOMED</span>
 
-            <button id="test-mode-toggle" class="panic-btn" style="border-color: var(--gold); color: var(--gold); margin-left: 15px;" onclick="toggleTestMode()">🧪 TEST MODE</button>
-            <button id="audio-toggle" class="panic-btn" style="border-color: var(--cyan); color: var(--cyan);" onclick="toggleAudio()">🔇 LYDLØS</button>
-            <button class="panic-btn" style="border-color: var(--gold); color: var(--gold);" onclick="triggerHome()">🏠 HOME</button>
+            <button id="test-mode-toggle" class="panic-btn" style="border-color: var(--gold); color: var(--gold); margin-left: 15px;" onclick="toggleTestMode()"> TEST MODE</button>
+            <button id="audio-toggle" class="panic-btn" style="border-color: var(--cyan); color: var(--cyan);" onclick="toggleAudio()">LYDLOS</button>
+            <button class="panic-btn" style="border-color: var(--gold); color: var(--gold);" onclick="triggerHome()">HOME</button>
             <button class="panic-btn" onclick="triggerEStop()">NØDSTOPP</button>
         </div>
     </header>
@@ -596,7 +596,7 @@
 
             <!-- KNAPP FOR Å LASTE NED DATA TIL RAPPORT -->
             <div style="text-align: right; margin-bottom: 20px;">
-                <button class="key-btn" style="padding: 5px 15px; font-size: 0.8rem; border-color: var(--gold); color: var(--gold);" onclick="downloadLatencyData()">📊 LAST NED LATENCY-RAPPORT (CSV)</button>
+                <button class="key-btn" style="padding: 5px 15px; font-size: 0.8rem; border-color: var(--gold); color: var(--gold);" onclick="downloadLatencyData()">LAST NED LATENCY-RAPPORT (CSV)</button>
             </div>
 
             <p style="color: var(--text-muted); font-size: 0.95rem; line-height: 1.5; margin-bottom: 20px;">
@@ -611,8 +611,8 @@
                 function generatePiano() {
                     const container = document.getElementById('full-piano');
                     const notes = [];
-                    // A0 (21) til F5 (77)
-                    for (let n = 21; n <= 77; n++) {
+                    // C3 (48) til F7 (101)
+                    for (let n = 48; n <= 101; n++) {
                         const isBlack = [1, 3, 6, 8, 10].includes(n % 12);
                         const btn = document.createElement('button');
                         btn.className = isBlack ? 'key-btn-black' : 'key-btn-white';
@@ -632,14 +632,14 @@
             </script>
 
             <div style="display: flex; gap: 10px; margin-top: 10px;">
-                <button class="key-btn" style="flex: 1; padding: 10px; font-size: 0.9rem; color: var(--gold); border-color: var(--gold);" onclick="runSolenoidTest()">🎹 SOLENOID TEST (16 sol)</button>
-                <button class="key-btn" style="flex: 1; padding: 10px; font-size: 0.9rem; color: var(--cyan); border-color: var(--cyan);" onclick="runMotorTest()">⚙️ MOTOR TEST (0→580mm)</button>
+                <button class="key-btn" style="flex: 1; padding: 10px; font-size: 0.9rem; color: var(--gold); border-color: var(--gold);" onclick="runSolenoidTest()">SOLENOID TEST (4 states)</button>
+                <button class="key-btn" style="flex: 1; padding: 10px; font-size: 0.9rem; color: var(--cyan); border-color: var(--cyan);" onclick="runMotorTest()">MOTOR TEST (0-60 input)</button>
             </div>
 
             <!-- Motor manuell posisjonskontroll -->
             <div class="control-group" style="margin-top: 15px; border: 1px solid var(--cyan); border-radius: 4px; padding: 12px;">
                 <label style="color: var(--cyan); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px;">
-                    ⚙️ Motor Manuell Kontroll
+                    Motor Manuell Kontroll
                 </label>
                 <div style="margin-top: 10px;">
                     <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
@@ -687,15 +687,16 @@
                     <div id="midi-library-list" style="max-height: 150px; overflow-y: auto; background: rgba(0,0,0,0.5); border-radius: 4px; border: 1px solid #222;">
                         <div style="padding: 10px; color: #555; font-style: italic;">Laster bibliotek...</div>
                     </div>
-                    <button class="key-btn" style="width: 100%; margin-top: 10px; padding: 5px; font-size: 0.8rem;" onclick="refreshLibrary()">🔄 OPPDATER LISTE</button>
+                    <button class="key-btn" style="width: 100%; margin-top: 10px; padding: 5px; font-size: 0.8rem;" onclick="refreshLibrary()">OPPDATER LISTE</button>
                 </div>
 
                 <!-- Nye avspillingskontroller -->
+                <button class="key-btn" style="width: 100%; margin-top: 10px; padding: 8px; font-size: 0.9rem; color: var(--cyan); border-color: var(--cyan);" onclick="runShowcase()">SHOWCASE</button>
                 <div style="display: flex; gap: 10px; margin-top: 10px;">
-                    <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem;" onclick="controlPlayback('resume')">▶️ SPILL</button>
-                    <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem;" onclick="controlPlayback('pause')">⏸️ PAUSE</button>
-                    <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem; color: var(--danger); border-color: var(--danger);" onclick="controlPlayback('stop')">⏹️ STOPP</button>
-                    <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem; color: var(--gold); border-color: var(--gold);" onclick="fetch('/api/test_sequence')">🎹 A-DUR TEST</button>
+                    <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem;" onclick="controlPlayback('resume')">SPILL</button>
+                    <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem;" onclick="controlPlayback('pause')">PAUSE</button>
+                    <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem; color: var(--danger); border-color: var(--danger);" onclick="controlPlayback('stop')">STOPP</button>
+                    <button class="key-btn" style="flex: 1; padding: 8px; font-size: 0.9rem; color: var(--gold); border-color: var(--gold);" onclick="fetch('/api/test_sequence')">A-DUR TEST</button>
                 </div>
             </div>
         </div>
@@ -773,7 +774,7 @@
                         div.style.display = 'flex';
                         div.style.justifyContent = 'space-between';
                         div.style.fontSize = '0.85rem';
-                        div.innerHTML = `<span>🎵 ${file}</span> <span style="color: var(--cyan)">SPILL ▶️</span>`;
+                        div.innerHTML = `<span>${file}</span> <span style="color: var(--cyan)">SPILL</span>`;
                         div.onclick = () => playFromLibrary(file);
                         midiLibList.appendChild(div);
                     });
@@ -847,10 +848,10 @@
                     log('info', 'Realistisk piano-lyd er klar.');
                 } catch (e) {
                     log('error', 'Kunne ikke laste piano-samples.');
-                    btn.innerText = "🔇 FEIL";
+                    btn.innerText = "FEIL";
                 } finally { btn.disabled = false; }
             } else {
-                btn.innerText = "🔇 LYDLØS";
+                btn.innerText = "LYDLOS";
                 btn.style.borderColor = "var(--cyan)";
                 btn.style.color = "var(--cyan)";
                 log('info', 'Lyd deaktivert.');
@@ -1002,7 +1003,7 @@
                     const hTxt = document.getElementById('homing-text');
                     if (data.data.status) {
                         hInd.classList.add('connected');
-                        hTxt.innerText = "🏠 HOMED";
+                        hTxt.innerText = "HOMED";
                         hTxt.style.color = "var(--success)";
                         log('info', 'System kalibrert: Homing fullført.');
                     } else {
@@ -1035,7 +1036,7 @@
         }
 
         function runSolenoidTest() {
-            log('info', '🎹 Starter solenoid-test: 16 solenoider med 500ms mellomrom...');
+            log('info', 'Starter solenoid-test: 4 tilstander, hvite solenoider 0-7...');
             fetch('/api/solenoid_test')
                 .then(res => res.json())
                 .then(data => log('info', `Solenoid-test startet: noter ${data.notes}`))
@@ -1043,11 +1044,19 @@
         }
 
         function runMotorTest() {
-            log('info', '⚙️ Starter motor-test: 0 → 150 → 300 → 450 → 580 → 0 mm...');
+            log('info', 'Starter motor-test: 0 -> 19 -> 37 -> 56 -> 0 input...');
             fetch('/api/motor_test')
                 .then(res => res.json())
                 .then(data => log('info', `Motor-test startet: posisjoner ${data.positions_mm} mm`))
                 .catch(err => log('error', 'Motor-test feilet'));
+        }
+
+        function runShowcase() {
+            log('info', 'Starter four-state showcase...');
+            fetch('/api/four_state_showcase')
+                .then(res => res.json())
+                .then(data => log('info', 'Four-state showcase startet'))
+                .catch(err => log('error', 'Showcase feilet'));
         }
 
         const MOTOR_SCALE = 7.4625; // Faktisk mm = slider-verdi * 7.4625
@@ -1060,7 +1069,7 @@
         function motorMove() {
             const pos = parseInt(document.getElementById('motor-slider').value);
             const actual = (pos * MOTOR_SCALE).toFixed(1);
-            log('info', `⚙️ Sender MOVE → ${pos}mm (faktisk ${actual}mm)`);
+            log('info', `Sender MOVE -> ${pos}mm (faktisk ${actual}mm)`);
             fetch(`/api/motor_move/${pos}`)
                 .then(res => res.json())
                 .then(data => log('info', `Motor beveger seg til ${data.position_mm}mm`))
@@ -1070,7 +1079,7 @@
         function motorMoveHome() {
             document.getElementById('motor-slider').value = 0;
             document.getElementById('motor-pos-display').innerText = '0mm (0.0mm faktisk)';
-            log('info', '⚙️ Sender MOVE → 0mm (HOME)');
+            log('info', 'Sender MOVE -> 0mm (HOME)');
             fetch('/api/motor_move/0')
                 .then(res => res.json())
                 .then(data => log('info', 'Motor returnerer til 0mm'))
@@ -1144,7 +1153,7 @@
                 const data = await response.json();
                 const btn = document.getElementById('test-mode-toggle');
                 if (data.test_mode) {
-                    btn.innerText = "🧪 TEST MODE";
+                    btn.innerText = " TEST MODE";
                     btn.style.borderColor = "var(--gold)";
                     btn.style.color = "var(--gold)";
                 } else {
