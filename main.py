@@ -15,6 +15,51 @@ from kdaa_logic import KDAAScheduler
 app = FastAPI(title="Klaviator Dashboard")
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
+playback_tempo_percent = 100
+
+
+def analyze_midi_tempo(path: str, tempo_percent=None):
+    """Returner BPM-info for dashboardet. MIDI uten tempo bruker standard 120 BPM."""
+    percent = tempo_percent if tempo_percent is not None else playback_tempo_percent
+    tempos = []
+    try:
+        midi = mido.MidiFile(path)
+        for track in midi.tracks:
+            for msg in track:
+                if msg.type == "set_tempo":
+                    tempos.append(round(mido.tempo2bpm(msg.tempo), 2))
+    except Exception as e:
+        return {
+            "base_bpm": None,
+            "effective_bpm": None,
+            "display": "--",
+            "source": "unknown",
+            "tempo_percent": percent,
+            "error": str(e),
+        }
+
+    if not tempos:
+        base_bpm = 120.0
+        source = "default"
+    elif len(set(tempos)) == 1:
+        base_bpm = tempos[0]
+        source = "file"
+    else:
+        base_bpm = tempos[0]
+        source = "variable"
+
+    effective_bpm = round(base_bpm * percent / 100, 1)
+    display = str(int(effective_bpm)) if float(effective_bpm).is_integer() else str(effective_bpm)
+    return {
+        "base_bpm": base_bpm,
+        "effective_bpm": effective_bpm,
+        "display": display,
+        "source": source,
+        "tempo_percent": percent,
+        "tempo_count": len(tempos),
+        "tempo_min": min(tempos) if tempos else base_bpm,
+        "tempo_max": max(tempos) if tempos else base_bpm,
+    }
 
 class HardwareController:
     def __init__(self):
@@ -106,6 +151,7 @@ class HardwareController:
             print(f"[HARDWARE] Fant ingen aktive porter blant: {potential_ports}")
 
     def _serial_worker_thread(self):
+        global current_window_start
         rx_buffers = {ser.port: "" for ser in self.serial_ports}
         commands_sent = 0
         while self.is_connected:
@@ -183,6 +229,7 @@ class HardwareController:
                                         asyncio.run_coroutine_threadsafe(broadcast_event("buffer_full", {"message": line}), self.loop)
                                         asyncio.run_coroutine_threadsafe(broadcast_event("serial_log", {"type": "receive", "message": line}), self.loop)
                                 elif "[HOMED] Klar" in line:
+                                    current_window_start = 48
                                     if self.loop:
                                         asyncio.run_coroutine_threadsafe(
                                             broadcast_event("homed", {"status": True}),
@@ -210,26 +257,45 @@ MIDI_LIB_PATH = os.path.join(current_dir, "midi_library")
 
 @app.get("/api/estop")
 async def estop():
-    global current_playback_task
+    global current_playback_task, is_paused
     if current_playback_task: current_playback_task.cancel()
+    is_paused = False
     hardware.send_queue.put("STOP\n")
+    await broadcast_event("emergency_stop", {"reason": "estop"})
+    await broadcast_event("playback_finish", {})
     return {"status": "stopped"}
 
 @app.get("/api/home")
 async def home():
+    global current_window_start
+    current_window_start = 48
     hardware.send_queue.put("HOME\n")
     return {"status": "homing"}
 
 @app.get("/api/library")
 async def get_lib(): return {"files": [f for f in os.listdir(MIDI_LIB_PATH) if f.endswith(('.mid', '.midi'))]}
 
+@app.get("/api/playback_tempo/{percent}")
+async def set_playback_tempo(percent: int):
+    global playback_tempo_percent
+    playback_tempo_percent = max(40, min(120, percent))
+    return {"status": "success", "tempo_percent": playback_tempo_percent}
+
+@app.get("/api/midi_info/{filename}")
+async def midi_info(filename: str):
+    file_path = os.path.join(MIDI_LIB_PATH, filename)
+    if not os.path.exists(file_path):
+        return {"status": "error", "reason": "file_not_found"}
+    return {"status": "success", "tempo": analyze_midi_tempo(file_path)}
+
 @app.get("/api/play_library/{filename}")
 async def play_lib(filename: str):
     global current_playback_task, is_paused
     is_paused = False
+    file_path = os.path.join(MIDI_LIB_PATH, filename)
     if current_playback_task: current_playback_task.cancel()
-    current_playback_task = asyncio.create_task(play_midi_background(os.path.join(MIDI_LIB_PATH, filename)))
-    return {"status": "playing"}
+    current_playback_task = asyncio.create_task(play_midi_background(file_path))
+    return {"status": "playing", "tempo": analyze_midi_tempo(file_path)}
 
 @app.get("/api/test_note/{note}")
 async def trigger_test_note(note: int):
@@ -277,15 +343,15 @@ async def run_solenoid_test():
 
 @app.get("/api/solenoid_test")
 async def run_four_state_solenoid_test():
-    """Tester ny 4-state modell: CH0-7 hvite tangenter i hver tilstand."""
+    """Tester 4-state modell: CH0-7 hvite og CH8-15 svarte tangenter."""
     hardware.send_sync()
     await asyncio.sleep(0.5)
 
     states = [
-        {"state": 1, "pos": 0,  "notes": [48, 50, 52, 53, 55, 57, 59, 60]},     # C3-C4
-        {"state": 2, "pos": 19, "notes": [62, 64, 65, 67, 69, 71, 72, 74]},     # D4-D5
-        {"state": 3, "pos": 37, "notes": [76, 77, 79, 81, 83, 84, 86, 88]},     # E5-E6
-        {"state": 4, "pos": 56, "notes": [89, 91, 93, 95, 96, 98, 100, 101]},   # F6-F7
+        {"state": 1, "pos": 0,  "notes": [48, 50, 52, 53, 55, 57, 59, 60, 49, 51, 54, 56, 58, 61]},
+        {"state": 2, "pos": 19, "notes": [62, 64, 65, 67, 69, 71, 72, 74, 63, 66, 68, 70, 73, 75]},
+        {"state": 3, "pos": 37, "notes": [76, 77, 79, 81, 83, 84, 86, 88, 78, 80, 82, 85, 87]},
+        {"state": 4, "pos": 56, "notes": [89, 91, 93, 95, 96, 98, 100, 101, 90, 92, 94, 97, 99, 102]},
     ]
 
     t_ms = 500
@@ -300,6 +366,101 @@ async def run_four_state_solenoid_test():
         t_ms += 500
 
     return {"status": "four_state_solenoid_test_started", "planned": planned}
+
+@app.get("/api/stationary_solenoid_test")
+async def run_stationary_solenoid_test():
+    """Tester stasjonær modul på egen PCA: C1-D#2, ingen motorbevegelse."""
+    hardware.send_sync()
+    await asyncio.sleep(0.5)
+
+    notes = [24, 26, 28, 29, 31, 33, 35, 36, 38, 25, 27, 30, 32, 34, 37, 39]
+    t_ms = 500
+    planned = []
+    for note in notes:
+        hardware.send_kdaa_event({
+            'type': 'STRIKE',
+            'hand': 'LEFT',
+            'note': note,
+            'vel': 110,
+            'timestamp': t_ms,
+            'duration': 450
+        })
+        planned.append({"note": note})
+        t_ms += 380
+
+    return {"status": "stationary_solenoid_test_started", "planned": planned}
+
+@app.get("/api/stationary_note/{note}")
+async def trigger_stationary_note(note: int):
+    """Slår én note på stasjonær modul uten å flytte motor."""
+    if note < 24 or note > 39:
+        return {"status": "error", "reason": "note_not_in_stationary_window", "note": note}
+
+    hardware.send_sync()
+    await asyncio.sleep(0.1)
+    hardware.send_kdaa_event({
+        'type': 'STRIKE',
+        'hand': 'LEFT',
+        'note': note,
+        'vel': 110,
+        'timestamp': 500,
+        'duration': 650
+    })
+    return {"status": "stationary_note_sent", "note": note}
+
+@app.get("/api/live_note/{note}")
+async def trigger_live_note(note: int, velocity: int = 100, duration: int = 180):
+    """Lav-latency VR-input uten SYNC/STOP. Ruter automatisk til stationary eller moving."""
+    global current_window_start
+
+    velocity = max(1, min(127, velocity))
+    duration = max(40, min(1200, duration))
+
+    if 24 <= note <= 39:
+        hardware.send_kdaa_event({
+            'type': 'STRIKE',
+            'hand': 'LEFT',
+            'note': note,
+            'vel': velocity,
+            'timestamp': 0,
+            'duration': duration
+        })
+        return {"status": "live_stationary_note_sent", "note": note, "velocity": velocity, "duration": duration}
+
+    if note < hardware.scheduler.piano_min_note or note > hardware.scheduler.piano_max_note:
+        return {"status": "error", "reason": "note_not_mapped", "note": note}
+
+    if not hardware.scheduler._notes_fit_in_window([note], current_window_start):
+        next_window_start = hardware.scheduler._window_start_for_note(note)
+        if next_window_start is None:
+            return {"status": "error", "reason": "note_not_available_in_moving_states", "note": note}
+
+        old_pos = hardware.scheduler._note_to_mm(current_window_start)
+        new_pos = hardware.scheduler._note_to_mm(next_window_start)
+        travel_ms = int((abs(new_pos - old_pos) / max(1, hardware.scheduler.v_max)) * 1000) + 40
+
+        current_window_start = next_window_start
+        hardware.send_kdaa_event({'type': 'MOVE', 'hand': 'LEFT', 'pos': new_pos, 'timestamp': 0})
+        strike_timestamp = max(60, travel_ms)
+    else:
+        strike_timestamp = 0
+
+    hardware.send_kdaa_event({
+        'type': 'STRIKE',
+        'hand': 'LEFT',
+        'note': note,
+        'vel': velocity,
+        'timestamp': strike_timestamp,
+        'duration': duration
+    })
+    return {
+        "status": "live_moving_note_sent",
+        "note": note,
+        "velocity": velocity,
+        "duration": duration,
+        "window_start": current_window_start,
+        "strike_timestamp": strike_timestamp
+    }
 
 @app.get("/api/motor_test")
 async def run_motor_test():
@@ -340,7 +501,7 @@ async def upload_midi(file: UploadFile = File(...)):
         f.write(content)
     if current_playback_task: current_playback_task.cancel()
     current_playback_task = asyncio.create_task(play_midi_background(file_path))
-    return {"status": "success", "filename": file.filename}
+    return {"status": "success", "filename": file.filename, "tempo": analyze_midi_tempo(file_path)}
 
 @app.get("/api/playback/{action}")
 async def control_playback(action: str):
@@ -349,7 +510,10 @@ async def control_playback(action: str):
     elif action == "resume": is_paused = False
     elif action == "stop":
         if current_playback_task: current_playback_task.cancel()
+        is_paused = False
         hardware.send_queue.put("STOP\n")
+        await broadcast_event("emergency_stop", {"reason": "playback_stop"})
+        await broadcast_event("playback_finish", {})
     return {"status": action}
 
 @app.get("/api/test_sequence")
@@ -369,16 +533,23 @@ async def four_state_showcase():
     return {"status": "playing"}
 
 async def play_four_state_showcase():
-    """Flytt-spill-flytt showcase for de fire kalibrerte state-vinduene."""
+    """Rask showcase for de fire kalibrerte state-vinduene."""
     states = [
-        {"name": "State 1 C3-C4", "pos": 0,  "notes": [48, 52, 55, 60, 55, 52, 48]},
-        {"name": "State 2 D4-D5", "pos": 19, "notes": [62, 65, 69, 74, 69, 65, 62]},
-        {"name": "State 3 E5-E6", "pos": 37, "notes": [76, 79, 83, 88, 83, 79, 76]},
-        {"name": "State 4 F6-F7", "pos": 56, "notes": [89, 93, 96, 101, 96, 93, 89]},
+        {"name": "State 1 C3-C4", "pos": 0,  "notes": [48, 52, 55, 60, 58, 55, 54, 52, 49, 48]},
+        {"name": "State 2 D4-D5", "pos": 19, "notes": [62, 65, 68, 69, 73, 74, 75, 74, 70, 69, 65, 62]},
+        {"name": "State 3 E5-E6", "pos": 37, "notes": [76, 78, 79, 82, 83, 87, 88, 87, 85, 83, 80, 79, 76]},
+        {"name": "State 4 F6-F7", "pos": 56, "notes": [89, 90, 93, 94, 96, 99, 102, 101, 99, 96, 94, 93, 90, 89]},
+        {"name": "State 3 return", "pos": 37, "notes": [88, 87, 83, 82, 79, 78, 76]},
+        {"name": "State 2 return", "pos": 19, "notes": [74, 73, 69, 68, 65, 63, 62]},
+        {"name": "State 1 finale", "pos": 0, "notes": [48, 49, 52, 54, 55, 58, 60, 55, 52, 48]},
     ]
 
     sequence = []
-    t = 800
+    t = 700
+    move_settle_ms = 720
+    note_gap_ms = 170
+    note_duration_ms = 230
+
     for state in states:
         sequence.append({
             'type': 'MOVE',
@@ -386,20 +557,20 @@ async def play_four_state_showcase():
             'pos': state["pos"],
             'timestamp': t
         })
-        t += 900
+        t += move_settle_ms
 
         for note in state["notes"]:
             sequence.append({
                 'type': 'STRIKE',
                 'hand': 'LEFT',
                 'note': note,
-                'vel': 95,
-                'duration': 320,
+                'vel': 110,
+                'duration': note_duration_ms,
                 'timestamp': t
             })
-            t += 260
+            t += note_gap_ms
 
-        t += 450
+        t += 220
 
     sequence.append({'type': 'MOVE', 'hand': 'LEFT', 'pos': 0, 'timestamp': t + 300})
 
@@ -503,7 +674,15 @@ async def broadcast_event(etype: str, data: dict):
 async def play_midi_background(path: str):
     global is_paused
     try:
-        schedule = hardware.scheduler.generate_schedule(path)
+        schedule = hardware.scheduler.generate_schedule(path, force_production=True)
+        tempo_info = analyze_midi_tempo(path)
+        tempo_scale = 100 / max(1, playback_tempo_percent)
+
+        if tempo_scale != 1:
+            for event in schedule:
+                event['timestamp'] = int(event['timestamp'] * tempo_scale)
+                if event.get('duration') is not None:
+                    event['duration'] = max(20, int(event['duration'] * tempo_scale))
         
         # CRITICAL FIX: Legg til 1000ms offset til ALLE timestamps
         # Dette gir MCU tid til å starte etter SYNC
@@ -517,7 +696,12 @@ async def play_midi_background(path: str):
             print(f"  #{i+1}: {ev['type']} note={ev.get('note', 'N/A')} vel={ev.get('vel', 'N/A')} t={ev['timestamp']}ms dur={ev.get('duration', 'N/A')}ms")
         print(f"{'='*60}\n")
         
-        await broadcast_event("playback_start", {"file": os.path.basename(path), "total_notes": len(schedule), "mode": "MCU-Master"})
+        await broadcast_event("playback_start", {
+            "file": os.path.basename(path),
+            "total_notes": len(schedule),
+            "mode": "MCU-Master",
+            "tempo": tempo_info,
+        })
         
         # CRITICAL: Send SYNC OG STOP, vent til MCU har prosessert
         hardware.send_sync()

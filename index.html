@@ -603,29 +603,41 @@
                 Aktiver manuell overstyring. Signaler kringkastes via WebSocket til Unity-klienten og sendes til seriell-port for fysisk aktivering av roboten.
             </p>
             
+            <div style="color: var(--success); font-size: 0.8rem; text-transform: uppercase; margin-bottom: 8px;">Stationary module C1-D#2</div>
+            <div class="piano-keys" id="stationary-piano" style="overflow-x: auto; justify-content: flex-start; padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid #333;">
+                <!-- Stationary module genereres av JavaScript -->
+            </div>
+
+            <div style="color: var(--gold); font-size: 0.8rem; text-transform: uppercase; margin-bottom: 8px;">Moving module C3-F#7</div>
             <div class="piano-keys" id="full-piano" style="overflow-x: auto; justify-content: flex-start; padding-bottom: 25px;">
                 <!-- Piano genereres av JavaScript for å sikre korrekt mapping av 57 noter -->
             </div>
 
             <script>
+                function createPianoButton(note, handler) {
+                    const isBlack = [1, 3, 6, 8, 10].includes(note % 12);
+                    const btn = document.createElement('button');
+                    btn.className = isBlack ? 'key-btn-black' : 'key-btn-white';
+                    const names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+                    const oct = Math.floor(note / 12) - 1;
+                    const name = names[note % 12];
+                    btn.innerHTML = `<span>${name}${oct}</span>`;
+                    btn.onclick = () => handler(note);
+                    btn.setAttribute('data-note', note);
+                    return btn;
+                }
+
                 function generatePiano() {
+                    const stationaryContainer = document.getElementById('stationary-piano');
+                    for (let n = 24; n <= 39; n++) {
+                        stationaryContainer.appendChild(createPianoButton(n, sendStationaryNote));
+                    }
+
                     const container = document.getElementById('full-piano');
                     const notes = [];
-                    // C3 (48) til F7 (101)
-                    for (let n = 48; n <= 101; n++) {
-                        const isBlack = [1, 3, 6, 8, 10].includes(n % 12);
-                        const btn = document.createElement('button');
-                        btn.className = isBlack ? 'key-btn-black' : 'key-btn-white';
-                        
-                        // Note navn for labels
-                        const names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
-                        const oct = Math.floor(n / 12) - 1;
-                        const name = names[n % 12];
-                        btn.innerHTML = `<span>${name}${oct}</span>`;
-                        
-                        btn.onclick = () => sendNote(n);
-                        btn.setAttribute('data-note', n);
-                        container.appendChild(btn);
+                    // C3 (48) til F#7 (102)
+                    for (let n = 48; n <= 102; n++) {
+                        container.appendChild(createPianoButton(n, sendNote));
                     }
                 }
                 window.addEventListener('DOMContentLoaded', generatePiano);
@@ -633,6 +645,7 @@
 
             <div style="display: flex; gap: 10px; margin-top: 10px;">
                 <button class="key-btn" style="flex: 1; padding: 10px; font-size: 0.9rem; color: var(--gold); border-color: var(--gold);" onclick="runSolenoidTest()">SOLENOID TEST (4 states)</button>
+                <button class="key-btn" style="flex: 1; padding: 10px; font-size: 0.9rem; color: var(--success); border-color: var(--success);" onclick="runStationaryTest()">STATIONARY TEST</button>
                 <button class="key-btn" style="flex: 1; padding: 10px; font-size: 0.9rem; color: var(--cyan); border-color: var(--cyan);" onclick="runMotorTest()">MOTOR TEST (0-60 input)</button>
             </div>
 
@@ -679,6 +692,19 @@
                 <div style="display: flex; gap: 10px; margin-top: 15px;">
                     <input type="file" id="midi-upload" accept=".mid,.midi" style="display: none;" onchange="uploadMidi()">
                     <button class="key-btn" style="flex: 1; padding: 10px; font-size: 1rem; color: var(--cyan); border-color: var(--cyan);" onclick="document.getElementById('midi-upload').click()">LAST OPP NY</button>
+                </div>
+
+                <div style="margin-top: 15px;">
+                    <label>
+                        <span>Playback tempo</span>
+                        <span id="tempo-status" style="color: var(--text-muted);">100%</span>
+                    </label>
+                    <div class="slider-container">
+                        <button class="adjust-btn" onclick="adjustTempo(-5)">-</button>
+                        <input type="range" id="tempo-slider" min="40" max="120" value="100" step="5" oninput="syncTempo(this.value)" onchange="syncTempo(this.value)">
+                        <button class="adjust-btn" onclick="adjustTempo(5)">+</button>
+                        <input type="number" id="tempo-input" class="number-input" value="100" min="40" max="120" step="5" onchange="syncTempo(this.value)">
+                    </div>
                 </div>
 
                 <!-- MIDI BIBLIOTEK -->
@@ -735,6 +761,9 @@
         const statusText = document.getElementById('ws-text');
         const cpuLatencyText = document.getElementById('cpu-latency');
         const midiLibList = document.getElementById('midi-library-list');
+        const bpmValue = document.getElementById('bpm-value');
+        const tempoStatus = document.getElementById('tempo-status');
+        let lastTempoInfo = null;
         
         const modalOverlay = document.getElementById('log-modal');
         const modalLogWindow = document.getElementById('modal-log-window');
@@ -784,11 +813,12 @@
 
         function playFromLibrary(filename) {
             log('info', `Starter bibliotek-avspilling: ${filename}`);
-            fetch(`/api/play_library/${filename}`)
+            fetch(`/api/play_library/${encodeURIComponent(filename)}`)
                 .then(res => res.json())
                 .then(data => {
                     document.getElementById('midi-status').innerText = filename;
                     document.getElementById('midi-status').style.color = "var(--gold-bright)";
+                    if (data.tempo) updateTempoDisplay(data.tempo);
                 });
         }
 
@@ -887,6 +917,54 @@
             syncOffset(current + change);
         }
 
+        function updateTempoDisplay(info) {
+            if (!info) return;
+            lastTempoInfo = info;
+            bpmValue.innerText = info.display || "--";
+            tempoStatus.innerText = `${info.tempo_percent || 100}%`;
+
+            if (info.source === "default") {
+                bpmValue.title = `MIDI-filen mangler tempo. Bruker default ${info.base_bpm} BPM.`;
+                log('info', `MIDI-tempo: default ${info.base_bpm} BPM, playback ${info.tempo_percent}% -> ${info.effective_bpm} BPM`);
+            } else if (info.source === "variable") {
+                bpmValue.title = `Variabelt MIDI-tempo: ${info.tempo_min}-${info.tempo_max} BPM. Viser starttempo skalert.`;
+                log('info', `MIDI-tempo: variabelt ${info.tempo_min}-${info.tempo_max} BPM, playback ${info.tempo_percent}%`);
+            } else {
+                bpmValue.title = `MIDI-tempo: ${info.base_bpm} BPM, playback ${info.tempo_percent}%`;
+                log('info', `MIDI-tempo: ${info.base_bpm} BPM, playback ${info.tempo_percent}% -> ${info.effective_bpm} BPM`);
+            }
+        }
+
+        function syncTempo(val) {
+            let num = parseInt(val);
+            if (isNaN(num)) return;
+            num = Math.max(40, Math.min(120, num));
+            document.getElementById('tempo-slider').value = num;
+            document.getElementById('tempo-input').value = num;
+            tempoStatus.innerText = `${num}%`;
+            fetch(`/api/playback_tempo/${num}`)
+                .then(res => res.json())
+                .then(data => {
+                    tempoStatus.innerText = `${data.tempo_percent}%`;
+                    if (lastTempoInfo && lastTempoInfo.base_bpm) {
+                        const updated = {...lastTempoInfo};
+                        updated.tempo_percent = data.tempo_percent;
+                        updated.effective_bpm = Math.round(updated.base_bpm * data.tempo_percent) / 100;
+                        updated.display = Number.isInteger(updated.effective_bpm)
+                            ? String(updated.effective_bpm)
+                            : String(updated.effective_bpm.toFixed(1));
+                        updateTempoDisplay(updated);
+                    }
+                    log('info', `Playback tempo satt til ${data.tempo_percent}%`);
+                })
+                .catch(err => log('error', 'Kunne ikke sette playback tempo'));
+        }
+
+        function adjustTempo(change) {
+            let current = parseInt(document.getElementById('tempo-input').value);
+            syncTempo(current + change);
+        }
+
         // --- VISUAL TELEMETRY ---
         const canvas = document.getElementById('piano-roll-canvas');
         const ctx = canvas.getContext('2d');
@@ -979,6 +1057,7 @@
                 if (data.event === "playback_start") {
                     latencyData = [];
                     isLoggingPaused = true; // PAUSE LOGGING
+                    if (data.data.tempo) updateTempoDisplay(data.data.tempo);
                     log('info', `START: ${data.data.file} (Logg deaktivert for fart)`);
                     return;
                 }
@@ -1035,12 +1114,33 @@
             fetch(`/api/test_note/${note}`);
         }
 
+        function sendStationaryNote(note) {
+            fetch(`/api/stationary_note/${note}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'error') {
+                        log('error', `Stationary note ${note} er ikke i vinduet`);
+                    } else {
+                        log('info', `Stationary note sendt: ${note}`);
+                    }
+                })
+                .catch(err => log('error', 'Stationary note feilet'));
+        }
+
         function runSolenoidTest() {
-            log('info', 'Starter solenoid-test: 4 tilstander, hvite solenoider 0-7...');
+            log('info', 'Starter solenoid-test: 4 tilstander, hvite 0-7 og svarte 8-15...');
             fetch('/api/solenoid_test')
                 .then(res => res.json())
                 .then(data => log('info', `Solenoid-test startet: noter ${data.notes}`))
                 .catch(err => log('error', 'Solenoid-test feilet'));
+        }
+
+        function runStationaryTest() {
+            log('info', 'Starter stationary-test: C1-D#2 på egen PCA...');
+            fetch('/api/stationary_solenoid_test')
+                .then(res => res.json())
+                .then(data => log('info', `Stationary-test startet: ${data.planned.length} noter`))
+                .catch(err => log('error', 'Stationary-test feilet'));
         }
 
         function runMotorTest() {
@@ -1092,7 +1192,13 @@
             const formData = new FormData();
             formData.append('file', input.files[0]);
             log('info', `Laster opp: ${input.files[0].name}...`);
-            fetch('/api/upload_midi', { method: 'POST', body: formData });
+            fetch('/api/upload_midi', { method: 'POST', body: formData })
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('midi-status').innerText = data.filename || input.files[0].name;
+                    document.getElementById('midi-status').style.color = "var(--gold-bright)";
+                    if (data.tempo) updateTempoDisplay(data.tempo);
+                });
         }
 
         function controlPlayback(action) {
